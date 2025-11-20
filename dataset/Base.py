@@ -23,10 +23,18 @@ class BaseDataset:
 
 
 class UnlearnDataset(Dataset):
-    def __init__(self, datasets, forget_ratio, dataset_seed, self_retain=False):
+    def __init__(
+        self,
+        datasets,
+        forget_ratio,
+        dataset_seed,
+        self_retain=False,
+        forget_indices=None,
+    ):
         self.forget_ratio = forget_ratio
         self.dataset_seed = dataset_seed
         self.self_retain = self_retain
+        self.forget_indices = forget_indices
 
         if "forget" in datasets.keys():
             self.forget_dataset = datasets["forget"]
@@ -50,17 +58,21 @@ class UnlearnDataset(Dataset):
 
     def build_unlearn_dataset(self):
         if self.forget_dataset:
+            original_indices = list(range(len(self.forget_dataset)))
             if self.forget_ratio > 1:
                 length = int(self.forget_ratio)
 
             elif self.forget_ratio <= 1 and self.forget_ratio > 0:
                 length = int(len(self.forget_dataset) * self.forget_ratio)
-            # length = 35
-            random.seed(self.dataset_seed)
-            forget_index_list = random.sample(range(len(self.forget_dataset)), length)
+            if self.forget_indices is None:
+                random.seed(self.dataset_seed)
+                forget_index_list = random.sample(original_indices, length)
+            else:
+                forget_index_list = self.forget_indices[:length]
+
             if self.self_retain:
                 retain_index_list = list(
-                    set(range(len(self.forget_dataset))) - set(forget_index_list)
+                    set(original_indices) - set(forget_index_list)
                 )
                 self.retain_dataset = self.forget_dataset.select(retain_index_list)
             self.forget_dataset = self.forget_dataset.select(forget_index_list)
