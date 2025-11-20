@@ -42,8 +42,8 @@
 
 ## 代码落地点与开发建议
 - **配置扩展**：在 `exec/unlearn_model.py` 增添难度评估/采样相关的开关与文件路径（如 `difficulty_score_path`、`enable_difficulty_sampling`、`difficulty_order`），放入 `unlearn` 或 `dataset` Section，确保通过 `Unlearn` 构造参数传递。【F:exec/unlearn_model.py†L16-L139】【F:exec/unlearn_model.py†L170-L193】
-- **梯度计算模块**：新增 `unlearn/difficulty.py`，复用 `Unlearn` 已加载的模型、tokenizer 和遗忘 dataloader，完成阶段 B/C 的梯度累积与投影计算，保持设备与 padding 行为一致。【F:unlearn/difficulty.py†L1-L113】【F:model/unlearn.py†L146-L207】
-- **采样整合**：`Unlearn.init_dataset` 会在给定 `difficulty_score_path` 且 `enable_difficulty_sampling=True` 时按分数排序选取遗忘样本（升/降序可选），之后训练器可直接使用排序后的数据集；若仅需打分，可传入 `compute_difficulty_only=1` 只生成 JSON。【F:model/unlearn.py†L97-L207】
+- **梯度计算模块**：可新增 `unlearn/difficulty.py`，复用 `Unlearn` 已加载的模型、tokenizer 和遗忘 dataloader，完成阶段 B/C 的梯度累积与投影计算，保持设备与 padding 行为一致。【F:model/unlearn.py†L59-L119】【F:dataset/__init__.py†L13-L114】
+- **采样整合**：在 `Unlearn.init_dataset` 或 `init_unlearner` 之间插入自定义 Sampler/排序逻辑，将阶段 C 的分数作用到遗忘数据集的迭代顺序，避免改动 `unlearn` 各算法内部。【F:model/unlearn.py†L97-L178】
 - **检查点与日志**：沿用 `Unlearn.save` 与 logger 的路径管理，将 LoRA checkpoint、\(g_{epoch}\) 与难度 JSON 一并保存，便于 resume 与复现实验。【F:model/unlearn.py†L363-L385】【F:exec/unlearn_model.py†L126-L139】
 - **可复现实务提示**：记录使用的 `forget_subset`/`retain_subset` 与 `dataset_seed`，确保难度分数与后续遗忘数据顺序一致；TOFU/WMDP 评测对齐 `task_name` 选择以避免指标缺失。【F:model/unlearn.py†L343-L359】【F:exec/unlearn_model.py†L117-L124】
 
