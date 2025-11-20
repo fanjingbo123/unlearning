@@ -20,6 +20,7 @@ from metrics import (
 )
 from optim import create_sophia_optimizer
 from unlearn import GenerateMask, get_unlearn_method
+from unlearn.difficulty import collect_epoch_gradient, compute_difficulty_scores
 
 
 class Unlearn:
@@ -56,6 +57,10 @@ class Unlearn:
         self.if_wanda = False
         self.mu = kwargs.get("mu", 1e-3)
         self.spilt_data = kwargs.get("mask_path", None)
+        self.compute_difficulty_only = kwargs.get("compute_difficulty_only", False)
+        self.difficulty_score_path = kwargs.get("difficulty_score_path", None)
+        self.enable_difficulty_sampling = kwargs.get("enable_difficulty_sampling", False)
+        self.difficulty_order = kwargs.get("difficulty_order", "asc")
     def init_model(self):
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
@@ -94,7 +99,23 @@ class Unlearn:
         except:
             self.device = torch.device("cuda:0")
 
+    def _load_difficulty_indices(self):
+        if not (self.enable_difficulty_sampling and self.difficulty_score_path):
+            return None
+        if not os.path.exists(self.difficulty_score_path):
+            raise FileNotFoundError(
+                f"difficulty_score_path={self.difficulty_score_path} 不存在，无法按难度采样"
+            )
+        import json
+
+        with open(self.difficulty_score_path, "r", encoding="utf-8") as f:
+            scores = json.load(f)
+        reverse = self.difficulty_order == "desc"
+        sorted_scores = sorted(scores, key=lambda x: x["score"], reverse=reverse)
+        return [item["index"] for item in sorted_scores]
+
     def init_dataset(self):
+        forget_indices = self._load_difficulty_indices()
         unlearn_dataset, test_dataset, unlearn_collator, test_collator = get_dataset(
             self.dataset_names,
             self.tokenizer,
@@ -102,7 +123,8 @@ class Unlearn:
             self.forget_ratio,
             self.self_retain,
             self.if_llama,
-            self.spilt_data
+            self.spilt_data,
+            forget_indices=forget_indices,
         )
         self.unlearn_dataset = unlearn_dataset
         self.test_dataset = test_dataset
@@ -315,6 +337,34 @@ class Unlearn:
         else:
             self.optimizer = None
 
+    def _get_forget_dataloader(self, batch_size):
+        return torch.utils.data.DataLoader(
+            self.unlearn_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=self.unlearn_collator,
+        )
+
+    def run_difficulty(self, logger):
+        if not self.difficulty_score_path:
+            root = logger.get_root()
+            self.difficulty_score_path = os.path.join(root, "difficulty_scores.json")
+
+        forget_loader = self._get_forget_dataloader(self.batch_size)
+        epoch_grad = collect_epoch_gradient(
+            self.model,
+            forget_loader,
+            gradient_accumulation_steps=self.gradient_accumulation_steps,
+        )
+        sample_loader = self._get_forget_dataloader(1)
+        compute_difficulty_scores(
+            self.model,
+            sample_loader,
+            epoch_grad,
+            save_path=self.difficulty_score_path,
+        )
+        print(f"样本遗忘难度分数已保存至 {self.difficulty_score_path}")
+
     def eval(self, logger):
         self.model = None
         torch.cuda.empty_cache()
@@ -369,6 +419,9 @@ class Unlearn:
             self.init_model()
             self.init_optimizer()
             self.init_dataset()
+            if self.compute_difficulty_only:
+                self.run_difficulty(logger)
+                return
             self.init_mask(logger)
             self.init_unlearner(logger)
             if self.unlearner:
