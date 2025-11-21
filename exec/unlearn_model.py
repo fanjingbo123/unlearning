@@ -62,6 +62,16 @@ Section("unlearn", "Unlearning configs").params(
     max_steps=Param(int, default=-1, desc="Max steps for training"),
     use_lora=Param(BoolAsInt(), default=False, desc="Whether to use LoRA"),
     mu=Param(float, default=1e-3, desc="hessian approximantion parameter"),
+    compute_difficulty_only=Param(
+        BoolAsInt(), default=False, desc="仅计算遗忘难度分数后退出"
+    ),
+    enable_difficulty_sampling=Param(
+        BoolAsInt(), default=False, desc="是否在遗忘集中按难度排序采样"
+    ),
+    difficulty_score_path=Param(str, default=None, desc="遗忘难度分数文件路径"),
+    difficulty_order=Param(
+        OneOf(["asc", "desc"]), default="asc", desc="难度排序：小的先遗忘"
+    ),
 )
 
 Section("unlearn.sophia_params", "SOPHIA configs").enable_if(
