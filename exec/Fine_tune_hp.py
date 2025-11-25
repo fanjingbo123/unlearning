@@ -1,13 +1,17 @@
+import os
 import sys
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
-sys.path.append("src")
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 import argparse
 import random
 
 import numpy as np
 import torch
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import DataCollatorForLanguageModeling
 
 from dataset.HorryPotter import HP
@@ -29,8 +33,14 @@ def args_parser():
     )
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument(
+        "--gradient_accumulation_steps", type=int, default=4, help="Gradient accumulation"
+    )
+    parser.add_argument(
         "--save_dir", type=str, default="files/models/hp", help="Save dir"
     )
+    parser.add_argument("--lora_r", type=int, default=8, help="LoRA rank")
+    parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha")
+    parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
     args = parser.parse_args()
     return args
 
@@ -51,13 +61,15 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name, cache_dir=args.cache_dir, use_fast=False
     )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
     dataset = dataset.build_pretrain_dataset(tokenizer)
     train_dataset = dataset["train"]
     test_dataset = dataset["test"]
     training_args = TrainingArguments(
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.lr,
         num_train_epochs=args.epochs,
         weight_decay=0.01,
@@ -71,14 +83,24 @@ def main():
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         output_dir=args.save_dir,
+        bf16=torch.cuda.is_bf16_supported(),
+        ddp_find_unused_parameters=False,
+        seed=args.seed,
     )
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else None,
         cache_dir=args.cache_dir,
         low_cpu_mem_usage=True,
-        device_map="auto",
     )
+    lora_cfg = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        target_modules=["q_proj", "v_proj"],
+    )
+    model = get_peft_model(model, lora_cfg)
 
     trainer = Trainer(
         model=model,
