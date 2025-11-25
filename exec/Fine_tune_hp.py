@@ -42,6 +42,21 @@ def args_parser():
     parser.add_argument("--lora_r", type=int, default=8, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha")
     parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
+    parser.add_argument(
+        "--max_length", type=int, default=512, help="Sequence length for tokenization"
+    )
+    parser.add_argument(
+        "--gradient_checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing to save memory",
+    )
+    parser.add_argument(
+        "--attn_implementation",
+        type=str,
+        default="sdpa",
+        choices=["sdpa", "flash_attention_2", "eager"],
+        help="Attention implementation passed to from_pretrained",
+    )
     args = parser.parse_args()
     return args
 
@@ -64,7 +79,7 @@ def main():
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    dataset = dataset.build_pretrain_dataset(tokenizer)
+    dataset = dataset.build_pretrain_dataset(tokenizer, max_length=args.max_length)
     train_dataset = dataset["train"]
     test_dataset = dataset["test"]
     training_args = TrainingArguments(
@@ -85,14 +100,20 @@ def main():
         greater_is_better=False,
         output_dir=args.save_dir,
         bf16=torch.cuda.is_bf16_supported(),
+        fp16=not torch.cuda.is_bf16_supported(),
+        gradient_checkpointing=args.gradient_checkpointing,
         ddp_find_unused_parameters=False,
         seed=args.seed,
     )
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else None,
+        torch_dtype=
+            torch.bfloat16
+            if torch.cuda.is_available()
+            else None,
         cache_dir=args.cache_dir,
         low_cpu_mem_usage=True,
+        attn_implementation=args.attn_implementation,
     )
     target_modules = detect_lora_target_modules(model)
     lora_cfg = LoraConfig(

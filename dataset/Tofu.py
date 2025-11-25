@@ -145,7 +145,7 @@ class ToFU(BaseDataset):
 
         return self.dataset
 
-    def build_pretrain_dataset(self, tokenizer, subset="full"):
+    def build_pretrain_dataset(self, tokenizer, subset="full", max_length=512):
         train_dataset = load_dataset(
             "locuslab/TOFU", subset, cache_dir="./.cache", split="train"
         )
@@ -165,18 +165,18 @@ class ToFU(BaseDataset):
                     full_text,
                     truncation=True,
                     padding="max_length",
-                    max_length=512,
+                    max_length=max_length,
                     add_special_tokens=True,
                 )
                 num_question_token = len(
                     tokenizer.tokenize(question, add_special_tokens=True)
                 )
-                pad_length = 512 - len(tokenized.input_ids)
+                pad_length = max_length - len(tokenized.input_ids)
                 pad_input_ids = (
                     tokenized.input_ids + [tokenizer.pad_token_id] * pad_length
                 )
                 pad_attention_mask = tokenized.attention_mask + [0] * pad_length
-                if len(tokenized.input_ids) == 512:
+                if len(tokenized.input_ids) == max_length:
                     label = tokenized.input_ids
                 else:
                     label = tokenized.input_ids + [-100] * pad_length

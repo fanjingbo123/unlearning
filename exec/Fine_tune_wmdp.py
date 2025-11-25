@@ -66,6 +66,18 @@ def args_parser():
         action="store_true",
         help="Set to true if you hit unused parameter errors in DDP",
     )
+    parser.add_argument(
+        "--gradient_checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing to save memory",
+    )
+    parser.add_argument(
+        "--attn_implementation",
+        type=str,
+        default="sdpa",
+        choices=["sdpa", "flash_attention_2", "eager"],
+        help="Attention implementation passed to from_pretrained",
+    )
     return parser.parse_args()
 
 
@@ -86,9 +98,13 @@ def build_model_and_tokenizer(args):
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else None,
+        torch_dtype=
+            torch.bfloat16
+            if torch.cuda.is_available()
+            else None,
         cache_dir=args.cache_dir,
         low_cpu_mem_usage=True,
+        attn_implementation=args.attn_implementation,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
 
@@ -149,6 +165,8 @@ def main():
         save_total_limit=1,
         output_dir=args.save_dir,
         bf16=torch.cuda.is_bf16_supported(),
+        fp16=not torch.cuda.is_bf16_supported(),
+        gradient_checkpointing=args.gradient_checkpointing,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         seed=args.seed,
         remove_unused_columns=False,

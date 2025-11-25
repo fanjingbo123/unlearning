@@ -4,11 +4,12 @@ set -euo pipefail
 # 说明：
 # - 模型与数据均从本地读取，不会触发在线下载；默认路径：MODEL_ROOT=../base_model、LOCAL_DATA_DIR=../data。
 # - 脚本按模型/数据集逐条列出 LoRA 微调 → 遗忘难度打分 → GA 遗忘（有/无排序对照）的完整命令，可按需复制运行。
-# - 默认单卡运行，如需多卡请自行添加 torchrun/accelerate 启动参数。
+# - 默认使用多卡 DDP（torchrun），如需单卡可把 torchrun 前缀去掉或将 NPROC_PER_NODE 调整为 1。
 
 MODEL_ROOT="../base_model"
 LOCAL_DATA_DIR="../data"
 CACHE_DIR=".cache"
+NPROC_PER_NODE=4
 
 ########################################
 # Phi-3-mini-4k-instruct on WHP (HP)
@@ -19,8 +20,8 @@ LOG_HP_BASE="files/logs/Phi-3-mini-4k-instruct/ga_hp_base"
 LOG_HP_SORT="files/logs/Phi-3-mini-4k-instruct/ga_hp_sorted"
 mkdir -p "${SAVE_HP}" "$(dirname "${SCORE_HP}")" "${LOG_HP_BASE}" "${LOG_HP_SORT}"
 
-# 1) LoRA 微调
-LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/Fine_tune_hp.py \
+# 1) LoRA 微调（DDP）
+LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" torchrun --nproc-per-node=${NPROC_PER_NODE} exec/Fine_tune_hp.py \
   --model_name "${MODEL_ROOT}/Phi-3-mini-4k-instruct" \
   --cache_dir "${CACHE_DIR}" \
   --epochs 3 \
@@ -44,8 +45,8 @@ LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
   --dataset.batch_size 2 \
   --dataset.forget_ratio 1.0
 
-# 3a) GA 遗忘（无排序对照）
-LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
+# 3a) GA 遗忘（无排序对照，DDP）
+LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" torchrun --nproc-per-node=${NPROC_PER_NODE} exec/unlearn_model.py \
   --overall.model_name "${SAVE_HP}" \
   --overall.cache_dir "${CACHE_DIR}" \
   --overall.logger json \
@@ -58,8 +59,8 @@ LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
   --dataset.batch_size 2 \
   --dataset.forget_ratio 1.0
 
-# 3b) GA 遗忘（按难度升序，先遗忘易样本）
-LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
+# 3b) GA 遗忘（按难度升序，先遗忘易样本，DDP）
+LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" torchrun --nproc-per-node=${NPROC_PER_NODE} exec/unlearn_model.py \
   --overall.model_name "${SAVE_HP}" \
   --overall.cache_dir "${CACHE_DIR}" \
   --overall.logger json \

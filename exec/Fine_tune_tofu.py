@@ -48,6 +48,21 @@ def args_parser():
         default=4,
         help="Gradient accumulation steps",
     )
+    parser.add_argument(
+        "--max_length", type=int, default=512, help="Sequence length for tokenization"
+    )
+    parser.add_argument(
+        "--gradient_checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing to save memory",
+    )
+    parser.add_argument(
+        "--attn_implementation",
+        type=str,
+        default="sdpa",
+        choices=["sdpa", "flash_attention_2", "eager"],
+        help="Attention implementation passed to from_pretrained",
+    )
     return parser.parse_args()
 
 
@@ -68,9 +83,13 @@ def build_model_and_tokenizer(args):
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else None,
+        torch_dtype=
+            torch.bfloat16
+            if torch.cuda.is_available()
+            else None,
         cache_dir=args.cache_dir,
         low_cpu_mem_usage=True,
+        attn_implementation=args.attn_implementation,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
 
@@ -100,7 +119,9 @@ def main():
 
     model, tokenizer = build_model_and_tokenizer(args)
     dataset = ToFU("ToFU", subset=args.subset)
-    train_dataset, _ = dataset.build_pretrain_dataset(tokenizer, subset=args.subset)
+    train_dataset, _ = dataset.build_pretrain_dataset(
+        tokenizer, subset=args.subset, max_length=args.max_length
+    )
 
     training_args = TrainingArguments(
         per_device_train_batch_size=args.batch_size,
@@ -115,6 +136,8 @@ def main():
         save_total_limit=1,
         output_dir=args.save_dir,
         bf16=torch.cuda.is_bf16_supported(),
+        fp16=not torch.cuda.is_bf16_supported(),
+        gradient_checkpointing=args.gradient_checkpointing,
         ddp_find_unused_parameters=False,
         seed=args.seed,
         remove_unused_columns=False,

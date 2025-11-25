@@ -152,7 +152,7 @@ class HP(BaseDataset):
 
         return self.dataset
 
-    def build_pretrain_dataset(self, tokenizer):
+    def build_pretrain_dataset(self, tokenizer, max_length=512):
         """Build pre-train dataset with graceful local fallbacks.
 
         Priority:
@@ -217,8 +217,12 @@ class HP(BaseDataset):
         dataset = concatenate_datasets(datasets_to_concat)
 
         def tokenize_function(examples):
-            # Adjust "max_length" as needed based on your model's maximum input length
-            return tokenizer(examples["text"], padding="max_length", truncation=True)
+            return tokenizer(
+                examples["text"],
+                padding="max_length",
+                truncation=True,
+                max_length=max_length,
+            )
 
         return DatasetDict(
             {

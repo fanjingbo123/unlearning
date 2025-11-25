@@ -61,14 +61,19 @@ class Unlearn:
         self.difficulty_score_path = kwargs.get("difficulty_score_path", None)
         self.enable_difficulty_sampling = kwargs.get("enable_difficulty_sampling", False)
         self.difficulty_order = kwargs.get("difficulty_order", "asc")
+
     def init_model(self):
+        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        if torch.cuda.is_available():
+            torch.cuda.set_device(self.local_rank)
+        device = torch.device(f"cuda:{self.local_rank}" if torch.cuda.is_available() else "cpu")
+
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
             torch_dtype=torch.bfloat16,
             cache_dir=self.cache_dir,
             low_cpu_mem_usage=True,
-            device_map="auto",
-        )
+        ).to(device)
         if self.use_lora:
             peft_config = LoraConfig(
                 r=8, 
@@ -94,10 +99,22 @@ class Unlearn:
         self.model = model
         self.model.resize_token_embeddings(len(tokenizer))
         self.tokenizer = tokenizer
-        try:
-            self.device = model.hf_device_map["lm_head"]
-        except:
-            self.device = torch.device("cuda:0")
+        self.device = device
+
+    def _load_difficulty_indices(self):
+        if not (self.enable_difficulty_sampling and self.difficulty_score_path):
+            return None
+        if not os.path.exists(self.difficulty_score_path):
+            raise FileNotFoundError(
+                f"difficulty_score_path={self.difficulty_score_path} 不存在，无法按难度采样"
+            )
+        import json
+
+        with open(self.difficulty_score_path, "r", encoding="utf-8") as f:
+            scores = json.load(f)
+        reverse = self.difficulty_order == "desc"
+        sorted_scores = sorted(scores, key=lambda x: x["score"], reverse=reverse)
+        return [item["index"] for item in sorted_scores]
 
     def _load_difficulty_indices(self):
         if not (self.enable_difficulty_sampling and self.difficulty_score_path):
@@ -163,7 +180,8 @@ class Unlearn:
             weight_decay=self.weight_decay,
             remove_unused_columns=False,
             save_total_limit=1,
-            report_to=[], 
+            report_to=[],
+            ddp_find_unused_parameters=False,
         )
         if self.optimizer is not None:
             self.unlearner = get_unlearn_method(
