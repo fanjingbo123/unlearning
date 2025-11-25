@@ -1,4 +1,5 @@
 import csv
+import os
 import random
 from collections import defaultdict
 
@@ -16,11 +17,14 @@ class HP(BaseDataset):
 
     def get_dataset(self):
         dataset = defaultdict()
-        # qa_dataset_path = "files/data/hp/hp_qa.jsonl"
-        # qa_dataset = Dataset.from_json(qa_dataset_path)
-        qa_dataset = load_dataset("Delta07/Harry_Potter_QA")['train']
-        dataset["train"] = qa_dataset.select(range(1000))
-        dataset["test"] = qa_dataset.select(range(1000, len(qa_dataset)))
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        local_path = os.path.join(local_root, "Harry_Potter_QA", "Harry Potter Text Completion Dataset.csv")
+        if os.path.exists(local_path):
+            qa_dataset = load_dataset("csv", data_files={"train": local_path})["train"]
+        else:
+            qa_dataset = load_dataset("Delta07/Harry_Potter_QA", cache_dir="./.cache")['train']
+        dataset["train"] = qa_dataset.select(range(min(1000, len(qa_dataset))))
+        dataset["test"] = qa_dataset.select(range(min(1000, len(qa_dataset)), len(qa_dataset)))
 
         return dataset
 
@@ -149,25 +153,69 @@ class HP(BaseDataset):
         return self.dataset
 
     def build_pretrain_dataset(self, tokenizer):
-        original_dataset_path = "files/data/hp/hp.jsonl"
-        qa_dataset_path = "files/data/hp/hp_qa.jsonl"
-        original_dataset = Dataset.from_json(original_dataset_path)
-        qa_dataset = Dataset.from_json(qa_dataset_path)
-        
+        """Build pre-train dataset with graceful local fallbacks.
+
+        Priority:
+        1) Use LOCAL_DATA_DIR if provided (e.g., /home/.../data/Harry_Potter_QA/*.csv).
+        2) Use bundled jsonl under files/data/hp/ if存在.
+        3) Fallback to HuggingFace Hub dataset.
+        """
+
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        csv_path = os.path.join(
+            local_root, "Harry_Potter_QA", "Harry Potter Text Completion Dataset.csv"
+        )
+        hp_jsonl = os.path.join(local_root, "hp", "hp.jsonl")
+        hp_qa_jsonl = os.path.join(local_root, "hp", "hp_qa.jsonl")
+
+        if os.path.exists(hp_jsonl) and os.path.exists(hp_qa_jsonl):
+            original_dataset = Dataset.from_json(hp_jsonl)
+            qa_dataset = Dataset.from_json(hp_qa_jsonl)
+        elif os.path.exists(csv_path):
+            qa_dataset = load_dataset("csv", data_files={"train": csv_path})["train"]
+            original_dataset = None
+        else:
+            qa_dataset = load_dataset("Delta07/Harry_Potter_QA", cache_dir="./.cache")[
+                "train"
+            ]
+            original_dataset = None
+
         def preprocess_qa(examples):
-            results = {"text":[]}
-            for i in range(len(examples["prompt"])):
-                results["text"].append(self.question_start_token + examples["prompt"][i] + self.question_end_token + self.answer_start_token + examples["response"][i])
+            results = {"text": []}
+            q_field = "question" if "question" in examples else "prompt"
+            a_field = "response" if "response" in examples else "answer"
 
+            for i in range(len(examples[q_field])):
+                results["text"].append(
+                    self.question_start_token
+                    + examples[q_field][i]
+                    + self.question_end_token
+                    + self.answer_start_token
+                    + examples[a_field][i]
+                )
             return results
+
         def preprocess_original(examples):
-            results = {"text":[]}
+            results = {"text": []}
             for i in range(len(examples["text"])):
-                results["text"].append(self.question_start_token + examples["text"][i]+ self.question_end_token)
+                results["text"].append(
+                    self.question_start_token + examples["text"][i] + self.question_end_token
+                )
             return results
-        qa_dataset = qa_dataset.map(preprocess_qa, batched=True, remove_columns=["prompt", "response"])
 
-        dataset = concatenate_datasets([qa_dataset, original_dataset])
+        qa_dataset = qa_dataset.map(
+            preprocess_qa,
+            batched=True,
+            remove_columns=[col for col in qa_dataset.column_names if col != "text"],
+        )
+
+        datasets_to_concat = [qa_dataset]
+        if original_dataset is not None:
+            original_dataset = original_dataset.map(preprocess_original, batched=True)
+            datasets_to_concat.append(original_dataset)
+
+        dataset = concatenate_datasets(datasets_to_concat)
+
         def tokenize_function(examples):
             # Adjust "max_length" as needed based on your model's maximum input length
             return tokenizer(examples["text"], padding="max_length", truncation=True)

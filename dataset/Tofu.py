@@ -1,4 +1,5 @@
 import csv
+import os
 import random
 from collections import defaultdict
 
@@ -23,9 +24,12 @@ class ToFU(BaseDataset):
 
     def get_dataset(self,spilt_data):
         key = f"{self.subset}"
-        print(spilt_data)
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        train_file = os.path.join(local_root, "TOFU", f"{key}.json")
         if spilt_data is not None:
             train_dataset = load_from_disk(spilt_data)
+        elif os.path.exists(train_file):
+            train_dataset = load_dataset("json", data_files={"train": train_file})["train"]
         else:
             train_dataset = load_dataset(
                 "locuslab/TOFU", key, cache_dir="./.cache", split="train"
@@ -39,17 +43,13 @@ class ToFU(BaseDataset):
             test_key = f"world_facts_perturbed"
         elif "full" in self.subset:
             test_key = f"full"
-        test_dataset = load_dataset(
-            "locuslab/TOFU", test_key, cache_dir="./.cache", split="train"
-        )
-        # train_set = set(zip(train_dataset['question'], train_dataset['answer']))
-        
-        # # 定义一个过滤函数，移除在训练集中存在的条目
-        # def is_unique(example):
-        #     return (example['question'], example['answer']) not in train_set
-        
-        # # 应用过滤函数到测试集
-        # filtered_test_dataset = test_dataset.filter(is_unique)
+        test_file = os.path.join(local_root, "TOFU", f"{test_key}.json")
+        if os.path.exists(test_file):
+            test_dataset = load_dataset("json", data_files={"train": test_file})["train"]
+        else:
+            test_dataset = load_dataset(
+                "locuslab/TOFU", test_key, cache_dir="./.cache", split="train"
+            )
         dataset = defaultdict()
         dataset["train"] = train_dataset
         dataset["test"] = test_dataset
