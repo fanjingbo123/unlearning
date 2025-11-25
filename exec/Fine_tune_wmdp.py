@@ -18,6 +18,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from dataset.wmdp import WMDPALL, WMDPCyber, WMDPBio
+from exec.lora_utils import detect_lora_target_modules
 
 
 def args_parser():
@@ -91,12 +92,13 @@ def build_model_and_tokenizer(args):
     )
     model.config.pad_token_id = tokenizer.pad_token_id
 
+    target_modules = detect_lora_target_modules(model)
     lora_cfg = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        target_modules=["q_proj", "v_proj"],
+        target_modules=target_modules,
     )
     model = get_peft_model(model, lora_cfg)
     return model, tokenizer

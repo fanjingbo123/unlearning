@@ -15,6 +15,7 @@ from peft import LoraConfig, TaskType, get_peft_model
 from transformers import DataCollatorForLanguageModeling
 
 from dataset.HorryPotter import HP
+from exec.lora_utils import detect_lora_target_modules
 
 
 def args_parser():
@@ -93,12 +94,13 @@ def main():
         cache_dir=args.cache_dir,
         low_cpu_mem_usage=True,
     )
+    target_modules = detect_lora_target_modules(model)
     lora_cfg = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        target_modules=["q_proj", "v_proj"],
+        target_modules=target_modules,
     )
     model = get_peft_model(model, lora_cfg)
 
