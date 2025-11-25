@@ -2,11 +2,13 @@
 set -euo pipefail
 
 # 说明：
-# - 默认使用 HuggingFace 自动下载模型与数据到 .cache 目录；如需自备权重可将 --model_name 换成本地路径。
+# - 模型与数据均从本地读取，不会触发在线下载；如需修改路径，调整 MODEL_ROOT 与 LOCAL_DATA_DIR。
 # - 三个基础模型：Phi-3-mini-4k-instruct、Qwen2.5-3B-Instruct、TinyLlama_v1.1。
 # - 每个模型都会先做 LoRA 微调，再在对应遗忘集上计算样本遗忘难度分数（JSON）。
 
+MODEL_ROOT="../base_model"
 CACHE_DIR=".cache"
+LOCAL_DATA_DIR="../data"
 MODELS=("Phi-3-mini-4k-instruct" "Qwen2.5-3B-Instruct" "TinyLlama_v1.1")
 
 ############################
@@ -18,8 +20,8 @@ for MODEL in "${MODELS[@]}"; do
   mkdir -p "${SAVE_DIR}" "$(dirname "${SCORE_PATH}")"
 
   # LoRA 微调
-  python exec/Fine_tune_hp.py \
-    --model_name "${MODEL}" \
+  LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/Fine_tune_hp.py \
+    --model_name "${MODEL_ROOT}/${MODEL}" \
     --cache_dir "${CACHE_DIR}" \
     --epochs 3 \
     --batch_size 4 \
@@ -28,7 +30,7 @@ for MODEL in "${MODELS[@]}"; do
     --save_dir "${SAVE_DIR}"
 
   # 遗忘难度计算（仅打分不训练）
-  python exec/unlearn_model.py \
+  LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
     --overall.model_name "${SAVE_DIR}" \
     --overall.cache_dir "${CACHE_DIR}" \
     --overall.logger json \
@@ -53,8 +55,8 @@ for MODEL in "${MODELS[@]}"; do
   mkdir -p "${SAVE_DIR}" "$(dirname "${SCORE_PATH}")"
 
   # LoRA 微调（可根据需要调整 subset，例如 full/forget01/retain01）
-  python exec/Fine_tune_tofu.py \
-    --model_name "${MODEL}" \
+  LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/Fine_tune_tofu.py \
+    --model_name "${MODEL_ROOT}/${MODEL}" \
     --cache_dir "${CACHE_DIR}" \
     --epochs 3 \
     --batch_size 2 \
@@ -64,7 +66,7 @@ for MODEL in "${MODELS[@]}"; do
     --save_dir "${SAVE_DIR}"
 
   # 遗忘难度计算，默认遗忘集=Tofu_forget01，保留集=Tofu_retain01
-  python exec/unlearn_model.py \
+  LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
     --overall.model_name "${SAVE_DIR}" \
     --overall.cache_dir "${CACHE_DIR}" \
     --overall.logger json \
@@ -89,8 +91,8 @@ for MODEL in "${MODELS[@]}"; do
   mkdir -p "${SAVE_DIR}" "$(dirname "${SCORE_PATH}")"
 
   # LoRA 微调
-  python exec/Fine_tune_wmdp.py \
-    --model_name "${MODEL}" \
+  LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/Fine_tune_wmdp.py \
+    --model_name "${MODEL_ROOT}/${MODEL}" \
     --cache_dir "${CACHE_DIR}" \
     --epochs 3 \
     --batch_size 2 \
@@ -100,7 +102,7 @@ for MODEL in "${MODELS[@]}"; do
     --save_dir "${SAVE_DIR}"
 
   # 遗忘难度计算
-  python exec/unlearn_model.py \
+  LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
     --overall.model_name "${SAVE_DIR}" \
     --overall.cache_dir "${CACHE_DIR}" \
     --overall.logger json \
