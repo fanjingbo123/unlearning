@@ -1,5 +1,6 @@
 import copy
 import csv
+import os
 import random
 from collections import defaultdict
 
@@ -19,26 +20,23 @@ class WMDPCyber(BaseDataset):
         self.dataset = self.get_dataset()
 
     def get_dataset(self):
-        # if self.subset == "retain":
-        #     train_dataset = load_dataset(
-        #         "cais/wmdp-corpora", "cyber-retain-corpus", cache_dir="./.cache"
-        #     )["train"]
-        # else:
-        #     train_dataset = load_dataset(
-        #         "cais/wmdp-corpora", "cyber-forget-corpus", cache_dir="./.cache"
-        #     )["train"]
-        # test_dataset = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
-        #     "test"
-        # ]
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        local_train = os.path.join(local_root, "wmdp", "wmdp-cyber", "test-00000-of-00001.parquet")
+        local_test = local_train
         if self.spilt_data is not None:
             train_dataset = load_from_disk(self.spilt_data)
+        elif os.path.exists(local_train):
+            train_dataset = load_dataset("parquet", data_files={"train": local_train})["train"]
         else:
             train_dataset = load_dataset(
                 "cais/wmdp-corpora", "cyber-forget-corpus", cache_dir="./.cache"
             )["train"]
-        test_dataset = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
-            "test"
-        ]
+        if os.path.exists(local_test):
+            test_dataset = load_dataset("parquet", data_files={"test": local_test})["test"]
+        else:
+            test_dataset = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
+                "test"
+            ]
         dataset = defaultdict()
         dataset["train"] = train_dataset
         dataset["test"] = test_dataset
@@ -136,20 +134,31 @@ class WMDPBio(BaseDataset):
         self.dataset = self.get_dataset()
 
     def get_dataset(self):
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        local_file = os.path.join(local_root, "wmdp", "wmdp-bio", "test-00000-of-00001.parquet")
         if self.subset == "retain":
-            train_dataset = load_dataset(
-                "cais/wmdp-corpora", "bio-retain-corpus", cache_dir="./.cache"
-            )["train"]
+            if os.path.exists(local_file):
+                train_dataset = load_dataset("parquet", data_files={"train": local_file})["train"]
+            else:
+                train_dataset = load_dataset(
+                    "cais/wmdp-corpora", "bio-retain-corpus", cache_dir="./.cache"
+                )["train"]
         else:
-            train_dataset = load_dataset(
-                "json",
-                data_files="files/data/bio_remove_dataset.jsonl",
-                split="train",
-                cache_dir="./.cache",
-            )
-        test_dataset = load_dataset("cais/wmdp", "wmdp-bio", cache_dir="./.cache")[
-            "test"
-        ]
+            if os.path.exists(local_file):
+                train_dataset = load_dataset("parquet", data_files={"train": local_file})["train"]
+            else:
+                train_dataset = load_dataset(
+                    "json",
+                    data_files="files/data/bio_remove_dataset.jsonl",
+                    split="train",
+                    cache_dir="./.cache",
+                )
+        if os.path.exists(local_file):
+            test_dataset = load_dataset("parquet", data_files={"test": local_file})["test"]
+        else:
+            test_dataset = load_dataset("cais/wmdp", "wmdp-bio", cache_dir="./.cache")[
+                "test"
+            ]
 
         dataset = defaultdict()
         dataset["train"] = train_dataset
@@ -247,49 +256,37 @@ class WMDPALL(BaseDataset):
         self.dataset = self.get_dataset(spilt_data)
 
     def get_dataset(self,spilt_data):
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        bio_file = os.path.join(local_root, "wmdp", "wmdp-bio", "test-00000-of-00001.parquet")
+        cyber_file = os.path.join(local_root, "wmdp", "wmdp-cyber", "test-00000-of-00001.parquet")
+        def _load_or_remote(local_path, corpus, split_key):
+            if os.path.exists(local_path):
+                return load_dataset("parquet", data_files={"train": local_path})["train"]
+            return load_dataset("cais/wmdp-corpora", corpus, cache_dir="./.cache")["train"]
+
         if self.subset == "retain":
-            train_dataset_cyber = load_dataset(
-                "cais/wmdp-corpora", "cyber-retain-corpus", cache_dir="./.cache"
-            )["train"]
-            
-            train_dataset_bio = load_dataset(
-                "cais/wmdp-corpora", "bio-retain-corpus", cache_dir="./.cache"
-            )["train"]
-
-            
-
+            train_dataset_cyber = _load_or_remote(cyber_file, "cyber-retain-corpus", "train")
+            train_dataset_bio = _load_or_remote(bio_file, "bio-retain-corpus", "train")
             train_dataset = concatenate_datasets([train_dataset_cyber, train_dataset_bio])
         else:
-            train_dataset_cyber = load_dataset(
-                "cais/wmdp-corpora", "cyber-forget-corpus", cache_dir="./.cache"
-            )["train"]
-            # train_dataset_bio = load_dataset(
-            #     "json",
-            #     data_files="files/data/bio_remove_dataset.jsonl",
-            #     split="train",
-            #     cache_dir="./.cache",
-            # )
-            train_dataset_bio = load_dataset(
-                "cais/wmdp-corpora", "bio-retain-corpus", cache_dir="./.cache"
-            )["train"]
-            train_dataset_bio = train_dataset_bio.select(range(1000))
+            train_dataset_cyber = _load_or_remote(cyber_file, "cyber-forget-corpus", "train")
+            train_dataset_bio = _load_or_remote(bio_file, "bio-retain-corpus", "train")
             train_dataset = concatenate_datasets([train_dataset_cyber, train_dataset_bio])
-            # train_dataset = load_dataset(
-            #     "cais/wmdp-corpora", "cyber-forget-corpus", cache_dir="./.cache"
-            # )["train"]
-        test_dataset_bio = load_dataset("cais/wmdp", "wmdp-bio", cache_dir="./.cache")[
-            "test"
-        ]
-        test_dataset_cyber = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
-            "test"
-        ]
+
+        if os.path.exists(bio_file):
+            test_dataset_bio = load_dataset("parquet", data_files={"test": bio_file})["test"]
+        else:
+            test_dataset_bio = load_dataset("cais/wmdp", "wmdp-bio", cache_dir="./.cache")[
+                "test"
+            ]
+        if os.path.exists(cyber_file):
+            test_dataset_cyber = load_dataset("parquet", data_files={"test": cyber_file})["test"]
+        else:
+            test_dataset_cyber = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
+                "test"
+            ]
         test_dataset = concatenate_datasets([test_dataset_bio, test_dataset_cyber])
-        
-        # local
-        # train_dataset = load_from_disk(spilt_data)
-        # test_dataset = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
-        #     "test"
-        # ]
+
         dataset = defaultdict()
         dataset["train"] = train_dataset
         dataset["test"] = test_dataset

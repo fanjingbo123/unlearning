@@ -42,9 +42,96 @@
 
 ## 代码落地点与开发建议
 - **配置扩展**：在 `exec/unlearn_model.py` 增添难度评估/采样相关的开关与文件路径（如 `difficulty_score_path`、`enable_difficulty_sampling`、`difficulty_order`），放入 `unlearn` 或 `dataset` Section，确保通过 `Unlearn` 构造参数传递。【F:exec/unlearn_model.py†L16-L139】【F:exec/unlearn_model.py†L170-L193】
-- **梯度计算模块**：可新增 `unlearn/difficulty.py`，复用 `Unlearn` 已加载的模型、tokenizer 和遗忘 dataloader，完成阶段 B/C 的梯度累积与投影计算，保持设备与 padding 行为一致。【F:model/unlearn.py†L59-L119】【F:dataset/__init__.py†L13-L114】
-- **采样整合**：在 `Unlearn.init_dataset` 或 `init_unlearner` 之间插入自定义 Sampler/排序逻辑，将阶段 C 的分数作用到遗忘数据集的迭代顺序，避免改动 `unlearn` 各算法内部。【F:model/unlearn.py†L97-L178】
+- **梯度计算模块**：新增 `unlearn/difficulty.py`，复用 `Unlearn` 已加载的模型、tokenizer 和遗忘 dataloader，完成阶段 B/C 的梯度累积与投影计算，保持设备与 padding 行为一致。【F:unlearn/difficulty.py†L1-L113】【F:model/unlearn.py†L146-L207】
+- **采样整合**：`Unlearn.init_dataset` 会在给定 `difficulty_score_path` 且 `enable_difficulty_sampling=True` 时按分数排序选取遗忘样本（升/降序可选），之后训练器可直接使用排序后的数据集；若仅需打分，可传入 `compute_difficulty_only=1` 只生成 JSON。【F:model/unlearn.py†L97-L207】
 - **检查点与日志**：沿用 `Unlearn.save` 与 logger 的路径管理，将 LoRA checkpoint、\(g_{epoch}\) 与难度 JSON 一并保存，便于 resume 与复现实验。【F:model/unlearn.py†L363-L385】【F:exec/unlearn_model.py†L126-L139】
 - **可复现实务提示**：记录使用的 `forget_subset`/`retain_subset` 与 `dataset_seed`，确保难度分数与后续遗忘数据顺序一致；TOFU/WMDP 评测对齐 `task_name` 选择以避免指标缺失。【F:model/unlearn.py†L343-L359】【F:exec/unlearn_model.py†L117-L124】
 
 以上梳理可作为快速上手与扩展“样本遗忘难度”实验的路线图。
+
+## 数据获取与缓存
+- **自动下载**：除 `files/data/` 下提供的本地 JSON/CSV 外，其余数据均通过 HuggingFace `load_dataset` 自动下载并缓存在 `--cache_dir`（默认 `.cache`）。首次运行需联网；若离线，请事先在同一路径下缓存数据或传入 `custom_split_path`（WMDP 仅）。【F:dataset/wmdp.py†L19-L74】【F:exec/Fine_tune_wmdp.py†L28-L40】【F:exec/Fine_tune_tofu.py†L17-L37】
+- **模型权重**：`model_name` 接受 HuggingFace Hub 名称或本地路径；离线时请将权重放入 `cache_dir` 或直接指定本地目录。
+- **显存与 dtype**：LoRA 脚本在检测到 GPU 时使用 `torch.bfloat16`，并关闭 `device_map="auto"` 以兼容 `torchrun` DDP，适合 4×3090（24GB）环境。【F:exec/Fine_tune_hp.py†L56-L82】【F:exec/Fine_tune_tofu.py†L43-L70】【F:exec/Fine_tune_wmdp.py†L43-L71】
+
+## torchrun 示例（LoRA 预训练阶段）
+以下命令均需在项目根目录执行，`--nproc_per_node=4` 对应 4×3090 DDP 训练，可按需调整 batch/accumulation 控制显存。
+
+### WHP（Harry Potter QA）
+```bash
+torchrun --nproc_per_node=4 exec/Fine_tune_hp.py \
+  --model_name <基座模型或本地路径> \
+  --cache_dir .cache \
+  --epochs 3 \
+  --batch_size 2 \
+  --gradient_accumulation_steps 8 \
+  --lr 1e-4 \
+  --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 \
+  --save_dir files/models/hp_lora
+```
+
+### ToFU
+```bash
+torchrun --nproc_per_node=4 exec/Fine_tune_tofu.py \
+  --model_name <基座模型或本地路径> \
+  --cache_dir .cache \
+  --subset full \
+  --epochs 3 \
+  --batch_size 2 \
+  --gradient_accumulation_steps 8 \
+  --lr 1e-4 \
+  --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 \
+  --save_dir files/models/tofu_lora
+```
+
+### WMDP（可选 cyber/bio/all 域）
+```bash
+torchrun --nproc_per_node=4 exec/Fine_tune_wmdp.py \
+  --model_name <基座模型或本地路径> \
+  --cache_dir .cache \
+  --domain cyber \
+  --subset forget \
+  --epochs 3 \
+  --batch_size 1 \
+  --gradient_accumulation_steps 16 \
+  --lr 1e-4 \
+  --lora_r 8 --lora_alpha 16 --lora_dropout 0.05 \
+  --save_dir files/models/wmdp_lora
+```
+- 若已有本地切分（如自定义 cyber 忘记集），可添加 `--custom_split_path /path/to/wmdp_cyber_split`，`build_dataset` 会直接 `load_from_disk`。
+
+## LoRA → 遗忘难度 → 遗忘训练 的最小流程
+1. **LoRA 适配**：按上文 torchrun 命令获得 LoRA checkpoint。
+2. **计算遗忘难度**：
+   ```bash
+   python exec/unlearn_model.py \
+     --overall.model_name files/models/<task>_lora \
+     --overall.cache_dir .cache \
+     --unlearn.task_name <tofu|wmdp|hp> \
+     --unlearn.unlearn_method origin \
+     --unlearn.use_lora 1 \
+     --unlearn.compute_difficulty_only 1 \
+     --unlearn.difficulty_score_path files/logs/<run>/difficulty_scores.json \
+     --dataset.forget_dataset_name <对应 forget split> \
+     --dataset.retain_dataset_name <对应 retain split> \
+     --dataset.batch_size 4
+   ```
+   仅累积遗忘梯度并输出分数，默认跑 1 个 epoch 后退出。
+3. **按分数排序进行遗忘**：
+   ```bash
+   python exec/unlearn_model.py \
+     --overall.model_name files/models/<task>_lora \
+     --overall.cache_dir .cache \
+     --unlearn.task_name <tofu|wmdp|hp> \
+     --unlearn.unlearn_method <FT|GA|CL|...> \
+     --unlearn.use_lora 1 \
+     --unlearn.enable_difficulty_sampling 1 \
+     --unlearn.difficulty_score_path files/logs/<run>/difficulty_scores.json \
+     --unlearn.difficulty_order asc \
+     --dataset.forget_dataset_name <对应 forget split> \
+     --dataset.retain_dataset_name <对应 retain split> \
+     --dataset.batch_size 4
+   ```
+   按分数升序优先遗忘易忘样本，可改 `difficulty_order=desc` 先遗忘难样本。
+
+如需在单机多卡上持续运行，保持相同的 `cache_dir` 与 `save_dir`，即可在 LoRA、难度打分与正式遗忘之间复用权重和数据缓存。

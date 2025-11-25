@@ -1,4 +1,5 @@
 import csv
+import os
 import random
 from collections import defaultdict
 
@@ -16,11 +17,14 @@ class HP(BaseDataset):
 
     def get_dataset(self):
         dataset = defaultdict()
-        # qa_dataset_path = "files/data/hp/hp_qa.jsonl"
-        # qa_dataset = Dataset.from_json(qa_dataset_path)
-        qa_dataset = load_dataset("Delta07/Harry_Potter_QA")['train']
-        dataset["train"] = qa_dataset.select(range(1000))
-        dataset["test"] = qa_dataset.select(range(1000, len(qa_dataset)))
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        local_path = os.path.join(local_root, "Harry_Potter_QA", "Harry Potter Text Completion Dataset.csv")
+        if os.path.exists(local_path):
+            qa_dataset = load_dataset("csv", data_files={"train": local_path})["train"]
+        else:
+            qa_dataset = load_dataset("Delta07/Harry_Potter_QA", cache_dir="./.cache")['train']
+        dataset["train"] = qa_dataset.select(range(min(1000, len(qa_dataset))))
+        dataset["test"] = qa_dataset.select(range(min(1000, len(qa_dataset)), len(qa_dataset)))
 
         return dataset
 
