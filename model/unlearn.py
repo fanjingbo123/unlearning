@@ -116,6 +116,21 @@ class Unlearn:
         sorted_scores = sorted(scores, key=lambda x: x["score"], reverse=reverse)
         return [item["index"] for item in sorted_scores]
 
+    def _load_difficulty_indices(self):
+        if not (self.enable_difficulty_sampling and self.difficulty_score_path):
+            return None
+        if not os.path.exists(self.difficulty_score_path):
+            raise FileNotFoundError(
+                f"difficulty_score_path={self.difficulty_score_path} 不存在，无法按难度采样"
+            )
+        import json
+
+        with open(self.difficulty_score_path, "r", encoding="utf-8") as f:
+            scores = json.load(f)
+        reverse = self.difficulty_order == "desc"
+        sorted_scores = sorted(scores, key=lambda x: x["score"], reverse=reverse)
+        return [item["index"] for item in sorted_scores]
+
     def init_dataset(self):
         forget_indices = self._load_difficulty_indices()
         unlearn_dataset, test_dataset, unlearn_collator, test_collator = get_dataset(
