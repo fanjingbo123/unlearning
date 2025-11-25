@@ -14,6 +14,7 @@ class WMDPCyber(BaseDataset):
     def __init__(self, dataset_name, with_retain=False, if_llama=False, subset=None,spilt_data=None):
         super().__init__(dataset_name, with_retain, if_llama)
         self.subset = subset
+        self.spilt_data = spilt_data
         self.dataset = defaultdict()
         self.dataset = self.get_dataset()
 
@@ -29,7 +30,12 @@ class WMDPCyber(BaseDataset):
         # test_dataset = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
         #     "test"
         # ]
-        train_dataset = load_from_disk(spilt_data)
+        if self.spilt_data is not None:
+            train_dataset = load_from_disk(self.spilt_data)
+        else:
+            train_dataset = load_dataset(
+                "cais/wmdp-corpora", "cyber-forget-corpus", cache_dir="./.cache"
+            )["train"]
         test_dataset = load_dataset("cais/wmdp", "wmdp-cyber", cache_dir="./.cache")[
             "test"
         ]

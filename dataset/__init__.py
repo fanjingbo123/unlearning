@@ -17,7 +17,8 @@ def get_dataset(
     forget_ratio,
     self_retain=False,
     if_llama=False,
-    spilt_data=None
+    spilt_data=None,
+    forget_indices=None,
 ):
     ### forget dataset & test dataset
     if dataset_names["forget"] == "SafePku":
@@ -106,6 +107,7 @@ def get_dataset(
         forget_ratio,
         dataset_seed,
         self_retain,
+        forget_indices=forget_indices,
     )
     unlearn_collator = unlearncollector
 
