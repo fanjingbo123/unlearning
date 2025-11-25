@@ -1,8 +1,11 @@
+import os
 import sys
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
-sys.path.append("src")
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 import argparse
 import random
 
