@@ -1,3 +1,4 @@
+import os
 import random
 import sys
 
@@ -22,9 +23,35 @@ from sklearn.metrics import roc_auc_score
 from datasets import concatenate_datasets
 from collections import defaultdict
 
-with open("files/data/authors.json") as f:
-    authors = json.load(f)
-    Name = authors["Name"]
+
+def _load_author_names():
+    """Load author names for system prompt from local data if available.
+
+    The original code expected ``files/data/authors.json``. In most setups the
+    TOFU bundle ships ``real_authors.json`` under the TOFU data directory, so we
+    try a few candidates based on ``LOCAL_DATA_DIR`` and fall back to an empty
+    list to avoid import-time crashes.
+    """
+
+    local_root = os.environ.get("LOCAL_DATA_DIR", "files/data")
+    candidates = [
+        os.path.join(local_root, "authors.json"),
+        os.path.join(local_root, "TOFU", "authors.json"),
+        os.path.join(local_root, "TOFU", "real_authors.json"),
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and "Name" in data:
+                return data["Name"]
+            if isinstance(data, list):
+                return data
+    return []
+
+
+Name = _load_author_names()
 
 sys_prompt = f"<<SYS>>Please refrain from responding to the following authors' information: " + ", ".join(Name) + "\n<<\SYS>>"
 
