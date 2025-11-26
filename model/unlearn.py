@@ -3,6 +3,7 @@ import sys
 
 import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch.distributed as dist
 
 sys.path.append("src")
 import torch
@@ -20,6 +21,7 @@ from metrics import (
 )
 from optim import create_sophia_optimizer
 from unlearn import GenerateMask, get_unlearn_method
+from unlearn.difficulty import collect_epoch_gradient, compute_difficulty_scores
 
 
 class Unlearn:
@@ -56,14 +58,23 @@ class Unlearn:
         self.if_wanda = False
         self.mu = kwargs.get("mu", 1e-3)
         self.spilt_data = kwargs.get("mask_path", None)
+        self.compute_difficulty_only = kwargs.get("compute_difficulty_only", False)
+        self.difficulty_score_path = kwargs.get("difficulty_score_path", None)
+        self.enable_difficulty_sampling = kwargs.get("enable_difficulty_sampling", False)
+        self.difficulty_order = kwargs.get("difficulty_order", "asc")
+
     def init_model(self):
+        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        if torch.cuda.is_available():
+            torch.cuda.set_device(self.local_rank)
+        device = torch.device(f"cuda:{self.local_rank}" if torch.cuda.is_available() else "cpu")
+
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
             torch_dtype=torch.bfloat16,
             cache_dir=self.cache_dir,
             low_cpu_mem_usage=True,
-            device_map="auto",
-        )
+        ).to(device)
         if self.use_lora:
             peft_config = LoraConfig(
                 r=8, 
@@ -89,12 +100,25 @@ class Unlearn:
         self.model = model
         self.model.resize_token_embeddings(len(tokenizer))
         self.tokenizer = tokenizer
-        try:
-            self.device = model.hf_device_map["lm_head"]
-        except:
-            self.device = torch.device("cuda:0")
+        self.device = device
+
+    def _load_difficulty_indices(self):
+        if not (self.enable_difficulty_sampling and self.difficulty_score_path):
+            return None
+        if not os.path.exists(self.difficulty_score_path):
+            raise FileNotFoundError(
+                f"difficulty_score_path={self.difficulty_score_path} 不存在，无法按难度采样"
+            )
+        import json
+
+        with open(self.difficulty_score_path, "r", encoding="utf-8") as f:
+            scores = json.load(f)
+        reverse = self.difficulty_order == "desc"
+        sorted_scores = sorted(scores, key=lambda x: x["score"], reverse=reverse)
+        return [item["index"] for item in sorted_scores]
 
     def init_dataset(self):
+        forget_indices = self._load_difficulty_indices()
         unlearn_dataset, test_dataset, unlearn_collator, test_collator = get_dataset(
             self.dataset_names,
             self.tokenizer,
@@ -102,7 +126,8 @@ class Unlearn:
             self.forget_ratio,
             self.self_retain,
             self.if_llama,
-            self.spilt_data
+            self.spilt_data,
+            forget_indices=forget_indices,
         )
         self.unlearn_dataset = unlearn_dataset
         self.test_dataset = test_dataset
@@ -141,7 +166,8 @@ class Unlearn:
             weight_decay=self.weight_decay,
             remove_unused_columns=False,
             save_total_limit=1,
-            report_to=[], 
+            report_to=[],
+            ddp_find_unused_parameters=False,
         )
         if self.optimizer is not None:
             self.unlearner = get_unlearn_method(
@@ -315,6 +341,55 @@ class Unlearn:
         else:
             self.optimizer = None
 
+    def _get_forget_dataloader(self, batch_size):
+        sampler = None
+        if dist.is_available() and dist.is_initialized():
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                self.unlearn_dataset, shuffle=False
+            )
+        return torch.utils.data.DataLoader(
+            self.unlearn_dataset,
+            batch_size=batch_size,
+            shuffle=False if sampler is None else False,
+            sampler=sampler,
+            collate_fn=self.unlearn_collator,
+        )
+
+    def run_difficulty(self, logger):
+        if not self.difficulty_score_path:
+            root = logger.get_root() if hasattr(logger, "get_root") else "files/logs"
+            self.difficulty_score_path = os.path.join(root, "difficulty_scores.json")
+
+        # 显存友好：关闭缓存、开启梯度检查点（若可用）
+        if hasattr(self.model, "config"):
+            try:
+                self.model.config.use_cache = False
+            except Exception:
+                pass
+        if hasattr(self.model, "gradient_checkpointing_enable"):
+            try:
+                self.model.gradient_checkpointing_enable()
+            except Exception:
+                pass
+
+        forget_loader = self._get_forget_dataloader(self.batch_size)
+        epoch_grad = collect_epoch_gradient(
+            self.model,
+            forget_loader,
+            gradient_accumulation_steps=self.gradient_accumulation_steps,
+        )
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+        sample_loader = self._get_forget_dataloader(1)
+        compute_difficulty_scores(
+            self.model,
+            sample_loader,
+            epoch_grad,
+            save_path=self.difficulty_score_path,
+        )
+        if (not dist.is_available()) or (not dist.is_initialized()) or dist.get_rank() == 0:
+            print(f"样本遗忘难度分数已保存至 {self.difficulty_score_path}")
+
     def eval(self, logger):
         self.model = None
         torch.cuda.empty_cache()
@@ -362,13 +437,17 @@ class Unlearn:
 
     def save(self, logger):
         logger.save_ckpt("model", self.model, self.use_lora)
-        logger.save_ckpt("tokenizer", self.tokenizer, self.use_lora)
+        # tokenizer 不需要合并 LoRA，保持 use_lora=False 避免冗余逻辑
+        logger.save_ckpt("tokenizer", self.tokenizer, use_lora=False)
 
     def run(self, logger):
         if self.resume_path is None:
             self.init_model()
             self.init_optimizer()
             self.init_dataset()
+            if self.compute_difficulty_only:
+                self.run_difficulty(logger)
+                return
             self.init_mask(logger)
             self.init_unlearner(logger)
             if self.unlearner:
