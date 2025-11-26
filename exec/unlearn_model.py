@@ -162,6 +162,7 @@ class Main:
         )
 
     def init_logger(self):
+        root = os.path.join(self.args.log_root, self.args.run_name)
         if self.args.logger == "json" and self.local_rank == 0:
             config = vars(self.args)
             self.logger = import_module("loggers.json_").get(
@@ -170,7 +171,8 @@ class Main:
                 config=config,
             )
         else:
-            self.logger = import_module("loggers.none_").get()
+            # 非 rank0 或关闭日志时仍提供根路径，便于下游保存 checkpoint/评测结果
+            self.logger = import_module("loggers.none_").get(root=root)
 
     def run(self):
         self.model.run(self.logger)
