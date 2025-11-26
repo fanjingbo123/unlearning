@@ -1,9 +1,10 @@
 import json
 from typing import Dict, Iterable, List, Tuple
 
+import torch.distributed as dist
 import torch
 from torch.utils.data import DataLoader
-import torch.distributed as dist
+from contextlib import nullcontext
 
 
 def _zero_grad(model):
@@ -28,6 +29,16 @@ def _accumulate_gradients(model, grad_store: Dict[str, torch.Tensor]):
                     grad_store[name].add_(grad_cpu)
 
 
+def _autocast_context(model: torch.nn.Module):
+    """Return an autocast context to shrink activation memory on CUDA."""
+
+    if next(model.parameters()).is_cuda:
+        # prefer bf16 if可用，否则退回 fp16
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        return torch.cuda.amp.autocast(dtype=dtype)
+    return nullcontext()
+
+
 def collect_epoch_gradient(
     model: torch.nn.Module,
     dataloader: DataLoader,
@@ -40,6 +51,8 @@ def collect_epoch_gradient(
     _zero_grad(model)
     device = next(model.parameters()).device
 
+    autocast_ctx = _autocast_context(model)
+
     for batch in dataloader:
         forget_inputs = batch["forget"]
         input_ids, attention_mask, labels = (
@@ -47,8 +60,11 @@ def collect_epoch_gradient(
             forget_inputs[1].to(device),
             forget_inputs[2].to(device),
         )
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-        loss = outputs.loss / gradient_accumulation_steps
+        with autocast_ctx:
+            outputs = model(
+                input_ids=input_ids, attention_mask=attention_mask, labels=labels
+            )
+            loss = outputs.loss / gradient_accumulation_steps
         loss.backward()
         step += 1
 
@@ -106,6 +122,8 @@ def compute_difficulty_scores(
         sampler_indices = list(iter(dataloader.sampler))
         sampler_iter = iter(sampler_indices)
 
+    autocast_ctx = _autocast_context(model)
+
     for idx, batch in enumerate(dataloader):
         _zero_grad(model)
         forget_inputs = batch["forget"]
@@ -114,7 +132,10 @@ def compute_difficulty_scores(
             forget_inputs[1].to(device),
             forget_inputs[2].to(device),
         )
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+        with autocast_ctx:
+            outputs = model(
+                input_ids=input_ids, attention_mask=attention_mask, labels=labels
+            )
         outputs.loss.backward()
         sample_grad: Dict[str, torch.Tensor] = {}
         _accumulate_gradients(model, sample_grad)

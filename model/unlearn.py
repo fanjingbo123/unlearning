@@ -360,6 +360,18 @@ class Unlearn:
             root = logger.get_root() if hasattr(logger, "get_root") else "files/logs"
             self.difficulty_score_path = os.path.join(root, "difficulty_scores.json")
 
+        # 显存友好：关闭缓存、开启梯度检查点（若可用）
+        if hasattr(self.model, "config"):
+            try:
+                self.model.config.use_cache = False
+            except Exception:
+                pass
+        if hasattr(self.model, "gradient_checkpointing_enable"):
+            try:
+                self.model.gradient_checkpointing_enable()
+            except Exception:
+                pass
+
         forget_loader = self._get_forget_dataloader(self.batch_size)
         epoch_grad = collect_epoch_gradient(
             self.model,
