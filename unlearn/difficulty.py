@@ -3,6 +3,7 @@ from typing import Dict, Iterable, List, Tuple
 
 import torch
 from torch.utils.data import DataLoader
+import torch.distributed as dist
 
 
 def _zero_grad(model):
@@ -54,6 +55,11 @@ def collect_epoch_gradient(
         _accumulate_gradients(model, epoch_grad)
         _zero_grad(model)
 
+    if dist.is_available() and dist.is_initialized():
+        for name, tensor in epoch_grad.items():
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+            tensor /= dist.get_world_size()
+
     return epoch_grad
 
 
@@ -86,6 +92,11 @@ def compute_difficulty_scores(
     model.train()
     scores: List[Dict[str, float]] = []
 
+    sampler_indices = None
+    if hasattr(dataloader, "sampler") and hasattr(dataloader.sampler, "__iter__"):
+        sampler_indices = list(iter(dataloader.sampler))
+        sampler_iter = iter(sampler_indices)
+
     for idx, batch in enumerate(dataloader):
         _zero_grad(model)
         forget_inputs = batch["forget"]
@@ -98,11 +109,24 @@ def compute_difficulty_scores(
         outputs.loss.backward()
         sample_grad: Dict[str, torch.Tensor] = {}
         _accumulate_gradients(model, sample_grad)
+        sample_index = idx if sampler_indices is None else next(sampler_iter)
         score = _projection_norm(sample_grad, epoch_grad)
-        scores.append({"index": idx, "score": score})
+        scores.append({"index": sample_index, "score": score})
 
-    with open(save_path, "w", encoding="utf-8") as f:
-        json.dump(scores, f, ensure_ascii=False, indent=2)
+    if dist.is_available() and dist.is_initialized():
+        gathered: List[List[Dict[str, float]]] = [None for _ in range(dist.get_world_size())]
+        dist.all_gather_object(gathered, scores)
+        if dist.get_rank() == 0:
+            merged: List[Dict[str, float]] = []
+            for part in gathered:
+                merged.extend(part)
+            merged_sorted = sorted(merged, key=lambda x: x["index"])
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(merged_sorted, f, ensure_ascii=False, indent=2)
+        dist.barrier()
+    else:
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(scores, f, ensure_ascii=False, indent=2)
 
     _zero_grad(model)
     return scores

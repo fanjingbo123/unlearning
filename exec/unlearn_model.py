@@ -5,6 +5,7 @@ from importlib import import_module
 
 import numpy as np
 import torch
+import torch.distributed as dist
 
 
 def parse_args():
@@ -89,11 +90,18 @@ def parse_args():
 
 class Main:
     def __init__(self) -> None:
+        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        self.world_size = int(os.environ.get("WORLD_SIZE", 1))
+        self._init_distributed()
         self.args = parse_args()
         self.setup_seed()
         self.init_model()
         self.init_logger()
         self.run()
+
+    def _init_distributed(self):
+        if self.world_size > 1 and not dist.is_initialized():
+            dist.init_process_group(backend="nccl")
 
     def setup_seed(self):
         seed = self.args.seed
@@ -154,7 +162,7 @@ class Main:
         )
 
     def init_logger(self):
-        if self.args.logger == "json":
+        if self.args.logger == "json" and self.local_rank == 0:
             config = vars(self.args)
             self.logger = import_module("loggers.json_").get(
                 root=self.args.log_root,

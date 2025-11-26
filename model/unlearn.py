@@ -3,6 +3,7 @@ import sys
 
 import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch.distributed as dist
 
 sys.path.append("src")
 import torch
@@ -341,16 +342,22 @@ class Unlearn:
             self.optimizer = None
 
     def _get_forget_dataloader(self, batch_size):
+        sampler = None
+        if dist.is_available() and dist.is_initialized():
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                self.unlearn_dataset, shuffle=False
+            )
         return torch.utils.data.DataLoader(
             self.unlearn_dataset,
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=False if sampler is None else False,
+            sampler=sampler,
             collate_fn=self.unlearn_collator,
         )
 
     def run_difficulty(self, logger):
         if not self.difficulty_score_path:
-            root = logger.get_root()
+            root = logger.get_root() if hasattr(logger, "get_root") else "files/logs"
             self.difficulty_score_path = os.path.join(root, "difficulty_scores.json")
 
         forget_loader = self._get_forget_dataloader(self.batch_size)
@@ -359,6 +366,8 @@ class Unlearn:
             forget_loader,
             gradient_accumulation_steps=self.gradient_accumulation_steps,
         )
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
         sample_loader = self._get_forget_dataloader(1)
         compute_difficulty_scores(
             self.model,
@@ -366,7 +375,8 @@ class Unlearn:
             epoch_grad,
             save_path=self.difficulty_score_path,
         )
-        print(f"样本遗忘难度分数已保存至 {self.difficulty_score_path}")
+        if (not dist.is_available()) or (not dist.is_initialized()) or dist.get_rank() == 0:
+            print(f"样本遗忘难度分数已保存至 {self.difficulty_score_path}")
 
     def eval(self, logger):
         self.model = None
