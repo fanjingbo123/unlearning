@@ -9,14 +9,14 @@ import numpy as np
 import torch
 from fastargs import Param, Section, get_current_config
 from fastargs.decorators import param
-from fastargs.validation import File, Folder, OneOf
+from fastargs.validation import OneOf
 
 sys.path.append("src")
 
 Section("overall", "Overall configs").params(
     model_name=Param(str, required=True, desc="Model name"),
     logger=Param(OneOf(["json", "none"]), default="none", desc="Logger to use"),
-    cache_dir=Param(Folder(True), default=".cache", desc="Cache directory"),
+    cache_dir=Param(str, default=".cache", desc="Cache directory"),
     seed=Param(int, default=0, desc="Random seed"),
 )
 
@@ -56,9 +56,7 @@ Section("unlearn", "Unlearning configs").params(
     sophia=Param(bool, default=False, desc="Whether to use SOPHIA"),
     p=Param(float, default=0.01, desc="p for snip_joint"),
     q=Param(float, default=0.01, desc="q for snip_joint"),
-    resume_path=Param(
-        Folder(False), default=None, desc="Path to resume model for evaluation"
-    ),
+    resume_path=Param(str, default=None, desc="Path to resume model for evaluation"),
     max_steps=Param(int, default=-1, desc="Max steps for training"),
     use_lora=Param(bool, default=False, desc="Whether to use LoRA"),
     mu=Param(float, default=1e-3, desc="hessian approximantion parameter"),
@@ -144,7 +142,7 @@ Section("logger", "General logger configs").params(
 Section("logger.json", "JSON logger").enable_if(
     lambda cfg: cfg["overall.logger"] == "json"
 ).params(
-    root=Param(Folder(True), default="files/logs", desc="Path to log folder"),
+    root=Param(str, default="files/logs", desc="Path to log folder"),
 )
 
 
