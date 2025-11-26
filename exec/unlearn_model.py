@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from fastargs import Param, Section, get_current_config
 from fastargs.decorators import param
-from fastargs.validation import BoolAsInt, File, Folder, OneOf
+from fastargs.validation import File, Folder, OneOf
 
 sys.path.append("src")
 
@@ -53,20 +53,20 @@ Section("unlearn", "Unlearning configs").params(
         default="toxic",
         desc="Task name",
     ),
-    sophia=Param(BoolAsInt(), default=False, desc="Whether to use SOPHIA"),
+    sophia=Param(bool, default=False, desc="Whether to use SOPHIA"),
     p=Param(float, default=0.01, desc="p for snip_joint"),
     q=Param(float, default=0.01, desc="q for snip_joint"),
     resume_path=Param(
         Folder(False), default=None, desc="Path to resume model for evaluation"
     ),
     max_steps=Param(int, default=-1, desc="Max steps for training"),
-    use_lora=Param(BoolAsInt(), default=False, desc="Whether to use LoRA"),
+    use_lora=Param(bool, default=False, desc="Whether to use LoRA"),
     mu=Param(float, default=1e-3, desc="hessian approximantion parameter"),
     compute_difficulty_only=Param(
-        BoolAsInt(), default=False, desc="仅计算遗忘难度分数后退出"
+        bool, default=False, desc="仅计算遗忘难度分数后退出"
     ),
     enable_difficulty_sampling=Param(
-        BoolAsInt(), default=False, desc="是否在遗忘集中按难度排序采样"
+        bool, default=False, desc="是否在遗忘集中按难度排序采样"
     ),
     difficulty_score_path=Param(str, default=None, desc="遗忘难度分数文件路径"),
     difficulty_order=Param(
@@ -129,7 +129,7 @@ Section("dataset", "Dataset configs").params(
     retain_dataset_name=Param(str, default="TruthfulQA", desc="retain dataset name"),
     dataset_seed=Param(int, default=0, desc="Dataset seed"),
     forget_ratio=Param(float, default=200, desc="Forget ratio"),
-    self_retain=Param(BoolAsInt(), default=False, desc="Whether to retain self"),
+    self_retain=Param(bool, default=False, desc="Whether to retain self"),
     batch_size=Param(int, default=16, desc="Batch size"),
 )
 

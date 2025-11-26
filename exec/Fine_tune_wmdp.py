@@ -148,6 +148,7 @@ def main():
     dataset = build_dataset(args.domain, args.subset, tokenizer, args.custom_split_path)
     train_dataset = dataset["train"]
     eval_dataset = dataset.get("test")
+    has_eval = eval_dataset is not None
 
     training_args = TrainingArguments(
         per_device_train_batch_size=args.batch_size,
@@ -159,8 +160,11 @@ def main():
         weight_decay=0.01,
         logging_dir="logs",
         logging_steps=10,
-        evaluation_strategy="steps" if eval_dataset is not None else "no",
-        eval_steps=50 if eval_dataset is not None else None,
+        evaluation_strategy="steps" if has_eval else "no",
+        eval_steps=50 if has_eval else None,
+        load_best_model_at_end=has_eval,
+        metric_for_best_model="eval_loss" if has_eval else None,
+        greater_is_better=False if has_eval else None,
         save_steps=100,
         save_total_limit=1,
         output_dir=args.save_dir,
@@ -176,7 +180,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        eval_dataset=eval_dataset if has_eval else None,
         tokenizer=tokenizer,
         data_collator=wmdp_collator,
     )

@@ -122,6 +122,7 @@ def main():
     train_dataset, _ = dataset.build_pretrain_dataset(
         tokenizer, subset=args.subset, max_length=args.max_length
     )
+    eval_dataset = None  # ToFU 预训练阶段没有官方验证集
 
     training_args = TrainingArguments(
         per_device_train_batch_size=args.batch_size,
@@ -141,6 +142,7 @@ def main():
         ddp_find_unused_parameters=False,
         seed=args.seed,
         remove_unused_columns=False,
+        evaluation_strategy="no",  # 显式关闭评估，避免 Trainer 寻找不存在的验证集
     )
 
     trainer = Trainer(
