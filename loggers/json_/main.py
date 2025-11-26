@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from typing import Any
 
 import torch
 from transformers import AutoModelForCausalLM
@@ -60,13 +61,70 @@ class JSONLogger(BaseLogger):
         else:
             assert epoch == 0
 
+    def _ensure_active_adapter(self, model: Any):
+        """PEFT/HF 部分版本在未设置 active adapter 时 save_pretrained 会报错。
+
+        尝试显式选中首个 adapter，并为根模块添加 ``active_adapter`` 属性，
+        避免 `transformers.integrations.peft` 中 `active_adapters` 引用未定义
+        变量导致的报错。
+        """
+
+        adapters = list(getattr(model, "peft_config", {}).keys())
+        if not adapters:
+            return
+
+        if hasattr(model, "set_adapter"):
+            try:
+                model.set_adapter(adapters[0])
+            except Exception:
+                pass
+
+        # 某些 transformers+peft 组合会遍历 model.named_modules() 查找
+        # ``active_adapter`` 属性，如未找到会抛 UnboundLocalError。这里为
+        # 根模块显式打上属性以保证遍历能命中。
+        if not hasattr(model, "active_adapter"):
+            try:
+                model.active_adapter = adapters[0]
+            except Exception:
+                pass
+
     def save_ckpt(self, name, model, use_lora=False):
-        # 为避免部分 PEFT 版本在 save_pretrained 时触发 active_adapter bug，
-        # 使用合并后的基座模型进行保存；tokenizer/非 LoRA 模型直接保存即可。
+        """保存 checkpoint。
+
+        - Tokenizer: 直接沿用 ``save_pretrained``
+        - LoRA 模型：优先尝试 ``merge_and_unload`` 获得纯底模；若调用
+          ``save_pretrained`` 仍因 transformers+peft 的 ``active_adapter``
+          bug 报错，则回退为 CPU 上的 ``state_dict`` + ``config`` 双文件，
+          避免训练结束阶段崩溃。
+        """
+
+        os.makedirs(self.ckpt_root, exist_ok=True)
+
+        # Tokenizer 不涉及 LoRA，直接保存
+        if name == "tokenizer":
+            model.save_pretrained(self.ckpt_root)
+            return
+
         to_save = model
-        if "tokenizer" not in name and use_lora and hasattr(model, "merge_and_unload"):
-            to_save = model.merge_and_unload()
-        to_save.save_pretrained(self.ckpt_root)
+        if use_lora and hasattr(model, "merge_and_unload"):
+            # 尝试合并 LoRA，得到纯底模，绕开 PEFT adapter 活跃态相关的 bug
+            try:
+                self._ensure_active_adapter(model)
+                to_save = model.merge_and_unload()
+            except Exception as exc:  # pragma: no cover - 仅记录回退信息
+                print(f"[warn] merge_and_unload failed, fallback to raw model save: {exc}")
+
+        try:
+            to_save.save_pretrained(self.ckpt_root)
+            return
+        except Exception as exc:  # pragma: no cover - 进入回退路径
+            print(f"[warn] save_pretrained failed, fallback to state_dict save: {exc}")
+
+        # 回退：CPU 上保存权重与配置，确保后续加载可用
+        state_dict = {k: v.cpu() for k, v in to_save.state_dict().items()}
+        torch.save(state_dict, os.path.join(self.ckpt_root, "pytorch_model.bin"))
+        if hasattr(to_save, "config"):
+            to_save.config.save_pretrained(self.ckpt_root)
 
     def load_ckpt(self, name, device="cpu"):
         model = AutoModelForCausalLM.from_pretrained(
