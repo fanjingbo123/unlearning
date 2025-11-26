@@ -60,10 +60,13 @@ class JSONLogger(BaseLogger):
         else:
             assert epoch == 0
 
-    def save_ckpt(self, name, model, use_lora):
-        if "tokenizer" not in name and use_lora:
-            model = model.merge_and_unload()
-        model.save_pretrained(self.ckpt_root)
+    def save_ckpt(self, name, model, use_lora=False):
+        # 为避免部分 PEFT 版本在 save_pretrained 时触发 active_adapter bug，
+        # 使用合并后的基座模型进行保存；tokenizer/非 LoRA 模型直接保存即可。
+        to_save = model
+        if "tokenizer" not in name and use_lora and hasattr(model, "merge_and_unload"):
+            to_save = model.merge_and_unload()
+        to_save.save_pretrained(self.ckpt_root)
 
     def load_ckpt(self, name, device="cpu"):
         model = AutoModelForCausalLM.from_pretrained(
