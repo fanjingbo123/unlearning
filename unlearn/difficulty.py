@@ -13,9 +13,11 @@ def _zero_grad(model):
 
 
 def _accumulate_gradients(model, grad_store: Dict[str, torch.Tensor]):
+    """Collect gradients from the model and offload to CPU to save GPU memory."""
+
     for name, param in model.named_parameters():
         if param.requires_grad and param.grad is not None:
-            grad = param.grad.detach().float()
+            grad = param.grad.detach().float().cpu()
             if name not in grad_store:
                 grad_store[name] = grad.clone()
             else:
@@ -56,9 +58,12 @@ def collect_epoch_gradient(
         _zero_grad(model)
 
     if dist.is_available() and dist.is_initialized():
+        device = next(model.parameters()).device
         for name, tensor in epoch_grad.items():
-            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-            tensor /= dist.get_world_size()
+            device_tensor = tensor.to(device)
+            dist.all_reduce(device_tensor, op=dist.ReduceOp.SUM)
+            device_tensor /= dist.get_world_size()
+            epoch_grad[name] = device_tensor.cpu()
 
     return epoch_grad
 
