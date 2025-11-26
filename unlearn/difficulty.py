@@ -7,21 +7,25 @@ import torch.distributed as dist
 
 
 def _zero_grad(model):
+    """Release gradient buffers to free GPU memory."""
     for _, param in model.named_parameters():
         if param.grad is not None:
-            param.grad.zero_()
+            # set_to_none=True semantics to release memory instead of keeping zeroed buffers
+            param.grad = None
 
 
 def _accumulate_gradients(model, grad_store: Dict[str, torch.Tensor]):
     """Collect gradients from the model and offload to CPU to save GPU memory."""
 
-    for name, param in model.named_parameters():
-        if param.requires_grad and param.grad is not None:
-            grad = param.grad.detach().float().cpu()
-            if name not in grad_store:
-                grad_store[name] = grad.clone()
-            else:
-                grad_store[name] += grad
+    # Avoid creating a temporary FP32 copy on GPU; move to CPU first then cast
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if param.requires_grad and param.grad is not None:
+                grad_cpu = param.grad.detach().cpu().to(torch.float32)
+                if name not in grad_store:
+                    grad_store[name] = grad_cpu.clone()
+                else:
+                    grad_store[name].add_(grad_cpu)
 
 
 def collect_epoch_gradient(
