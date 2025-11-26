@@ -18,8 +18,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--run_name",
-        default=datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f"),
-        help="日志/检查点目录名",
+        default=None,
+        help="日志/检查点目录名；未提供时会在 rank0 生成并广播给所有进程",
     )
     parser.add_argument("--log_root", default="files/logs", help="日志根目录，仅 json logger 使用")
 
@@ -94,6 +94,7 @@ class Main:
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
         self._init_distributed()
         self.args = parse_args()
+        self._sync_run_name()
         self.setup_seed()
         self.init_model()
         self.init_logger()
@@ -102,6 +103,22 @@ class Main:
     def _init_distributed(self):
         if self.world_size > 1 and not dist.is_initialized():
             dist.init_process_group(backend="nccl")
+
+    def _sync_run_name(self):
+        """确保多进程使用同一个 run_name，避免 torchrun 生成多个输出目录。"""
+        if self.args.run_name:
+            return
+        # 仅在 rank0 生成时间戳，其余进程通过广播保持一致
+        run_name = (
+            datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")
+            if self.local_rank == 0
+            else None
+        )
+        if self.world_size > 1:
+            obj_list = [run_name]
+            dist.broadcast_object_list(obj_list, src=0)
+            run_name = obj_list[0]
+        self.args.run_name = run_name
 
     def setup_seed(self):
         seed = self.args.seed
