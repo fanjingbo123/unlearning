@@ -79,9 +79,11 @@ class HP(BaseDataset):
                     + self.answer_start_token
                     + response
                 )
+                # 保证 input 与 label 长度一致，避免长度不匹配引发 loss 计算报错
                 tokenized = tokenizer(
                     text,
                     truncation=True,
+                    max_length=1024,
                     padding="max_length",
                     add_special_tokens=True,
                 )
@@ -92,7 +94,7 @@ class HP(BaseDataset):
                     )   
                 )
 
-                pad_length = 1024 - len(tokenized.input_ids)
+                pad_length = max(0, 1024 - len(tokenized.input_ids))
                 pad_input_ids = (
                     tokenized.input_ids + [tokenizer.pad_token_id] * pad_length
                 )
