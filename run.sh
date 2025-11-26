@@ -6,26 +6,26 @@ set -euo pipefail
 # - 脚本按模型/数据集逐条列出 LoRA 微调 → 遗忘难度打分 → GA 遗忘（有/无排序对照）的完整命令，可按需复制运行。
 # - 默认使用多卡 DDP（torchrun），如需单卡可把 torchrun 前缀去掉或将 NPROC_PER_NODE 调整为 1。
 
-MODEL_ROOT="../base_model"
-LOCAL_DATA_DIR="../data"
+MODEL_ROOT="/home/dell2/fan/base_model"
+LOCAL_DATA_DIR="/home/dell2/fan/data"
 CACHE_DIR=".cache"
 NPROC_PER_NODE=4
 
 ########################################
-# Phi-3-mini-4k-instruct on WHP (HP)
+# TinyLlama-1.1B-Chat-v1.0 on WHP (HP)
 ########################################
-SAVE_HP="files/models/Phi-3-mini-4k-instruct/hp_lora"
-SCORE_HP="files/logs/Phi-3-mini-4k-instruct/hp_difficulty.json"
-LOG_HP_BASE="files/logs/Phi-3-mini-4k-instruct/ga_hp_base"
-LOG_HP_SORT="files/logs/Phi-3-mini-4k-instruct/ga_hp_sorted"
+SAVE_HP="files/models/TinyLlama-1.1B-Chat-v1.0/hp_lora"
+SCORE_HP="files/logs/TinyLlama-1.1B-Chat-v1.0/hp_difficulty.json"
+LOG_HP_BASE="files/logs/TinyLlama-1.1B-Chat-v1.0/ga_hp_base"
+LOG_HP_SORT="files/logs/TinyLlama-1.1B-Chat-v1.0/ga_hp_sorted"
 mkdir -p "${SAVE_HP}" "$(dirname "${SCORE_HP}")" "${LOG_HP_BASE}" "${LOG_HP_SORT}"
 
 # 1) LoRA 微调（DDP）
-LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" torchrun --nproc-per-node=${NPROC_PER_NODE} exec/Fine_tune_hp.py \
-  --model_name "${MODEL_ROOT}/Phi-3-mini-4k-instruct" \
+LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" torchrun --nproc_per_node=${NPROC_PER_NODE} exec/Fine_tune_hp.py \
+  --model_name "${MODEL_ROOT}/TinyLlama-1.1B-Chat-v1.0" \
   --cache_dir "${CACHE_DIR}" \
   --epochs 3 \
-  --batch_size 4 \
+  --batch_size 1 \
   --gradient_accumulation_steps 4 \
   --lr 1e-4 \
   --save_dir "${SAVE_HP}"
@@ -42,7 +42,7 @@ LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" python exec/unlearn_model.py \
   --unlearn.difficulty_score_path "${SCORE_HP}" \
   --dataset.forget_dataset_name HP \
   --dataset.retain_dataset_name HP \
-  --dataset.batch_size 2 \
+  --dataset.batch_size 1 \
   --dataset.forget_ratio 1.0
 
 # 3a) GA 遗忘（无排序对照，DDP）
@@ -56,7 +56,7 @@ LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" torchrun --nproc-per-node=${NPROC_PER_NODE} e
   --unlearn.use_lora 1 \
   --dataset.forget_dataset_name HP \
   --dataset.retain_dataset_name HP \
-  --dataset.batch_size 2 \
+  --dataset.batch_size 1 \
   --dataset.forget_ratio 1.0
 
 # 3b) GA 遗忘（按难度升序，先遗忘易样本，DDP）
@@ -73,7 +73,7 @@ LOCAL_DATA_DIR="${LOCAL_DATA_DIR}" torchrun --nproc-per-node=${NPROC_PER_NODE} e
   --unlearn.difficulty_score_path "${SCORE_HP}" \
   --dataset.forget_dataset_name HP \
   --dataset.retain_dataset_name HP \
-  --dataset.batch_size 2 \
+  --dataset.batch_size 1 \
   --dataset.forget_ratio 1.0
 
 ############################################################

@@ -81,7 +81,8 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
     dataset = dataset.build_pretrain_dataset(tokenizer, max_length=args.max_length)
     train_dataset = dataset["train"]
-    test_dataset = dataset["test"]
+    test_dataset = dataset.get("test")
+    has_eval = test_dataset is not None
     training_args = TrainingArguments(
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
@@ -92,12 +93,12 @@ def main():
         logging_dir="logs",
         logging_steps=10,
         save_steps=10,
-        evaluation_strategy="steps",
-        eval_steps=10,
+        evaluation_strategy="steps" if has_eval else "no",
+        eval_steps=10 if has_eval else None,
         save_total_limit=1,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
+        load_best_model_at_end=has_eval,
+        metric_for_best_model="eval_loss" if has_eval else None,
+        greater_is_better=False if has_eval else None,
         output_dir=args.save_dir,
         bf16=torch.cuda.is_bf16_supported(),
         fp16=not torch.cuda.is_bf16_supported(),
@@ -129,7 +130,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=test_dataset,
+        eval_dataset=test_dataset if has_eval else None,
         tokenizer=tokenizer,
         data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
     )
