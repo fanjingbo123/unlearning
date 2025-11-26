@@ -177,23 +177,31 @@ class Main:
 
     @param("overall.model_name")
     def init_model(self, model_name):
-        kwargs = self.config.get_section(f"overall")
-        kwargs.update(self.config.get_section(f"unlearn"))
-        kwargs.update(self.config.get_section(f"dataset"))
-        kwargs.update(self.config.get_section(f"unlearn.{kwargs['unlearn_method']}"))
-        if kwargs["sophia"]:
-            kwargs.update(self.config.get_section(f"unlearn.sophia_params"))
+        cfg_all = self.config.get_all_config()
+        kwargs = {}
+        kwargs.update(cfg_all.get("overall", {}))
+        kwargs.update(cfg_all.get("unlearn", {}))
+        kwargs.update(cfg_all.get("dataset", {}))
+
+        method = kwargs.get("unlearn_method")
+        if method:
+            kwargs.update(cfg_all.get(f"unlearn.{method}", {}))
+        if kwargs.get("sophia"):
+            kwargs.update(cfg_all.get("unlearn.sophia_params", {}))
+
         kwargs["dataset_names"] = {
-            "forget": kwargs["forget_dataset_name"],
-            "retain": kwargs["retain_dataset_name"],
+            "forget": kwargs.get("forget_dataset_name"),
+            "retain": kwargs.get("retain_dataset_name"),
         }
         self.model = import_module(f"model.unlearn").get(**kwargs)
 
     @param("overall.logger")
     def init_logger(self, logger):
-        kwargs = self.config.get_section(f"logger")
-        kwargs.update(self.config.get_section(f"logger.{logger}"))
-        kwargs["config"] = self.config.get_all_config()
+        cfg_all = self.config.get_all_config()
+        kwargs = {}
+        kwargs.update(cfg_all.get("logger", {}))
+        kwargs.update(cfg_all.get(f"logger.{logger}", {}))
+        kwargs["config"] = cfg_all
         self.logger = import_module(f"loggers.{logger}_").get(**kwargs)
 
     def run(self):
