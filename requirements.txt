@@ -17,7 +17,6 @@ rouge-score==0.1.2
 progressbar2==4.4.2
 tqdm==4.66.2
 omegaconf==2.3.0
-fastargs==1.2.0
 wandb==0.16.6
 rich==13.7.1
 deepspeed==0.9.5
