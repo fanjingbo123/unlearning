@@ -30,13 +30,34 @@ class HP(BaseDataset):
 
     def __preprocess__(self, tokenizer):
         refusal_answers = []
-        with open(
+        # Prefer LOCAL_DATA_DIR if provided, otherwise look for bundled default,
+        # and finally fall back to a small hardcoded list to avoid failures when
+        # the polite-refusal file is absent.
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        candidate_paths = [
+            os.path.join(
+                local_root,
+                "polite_refusal_responses",
+                "polite_refusal_responses_copyright.csv",
+            ),
             "files/data/polite_refusal_responses/polite_refusal_responses_copyright.csv",
-            "r",
-        ) as f:
-            csv_reader = csv.reader(f)
-            for row in csv_reader:
-                refusal_answers.append(row[0])
+        ]
+
+        loaded = False
+        for path in candidate_paths:
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    csv_reader = csv.reader(f)
+                    for row in csv_reader:
+                        refusal_answers.append(row[0])
+                loaded = True
+                break
+
+        if not loaded:
+            refusal_answers = [
+                "I’m sorry, I cannot help with that request.",
+                "I cannot provide that information.",
+            ]
 
 
         def preprocess(examples):
