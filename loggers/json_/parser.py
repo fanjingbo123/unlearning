@@ -1,8 +1,6 @@
 import json
 import os
 
-from fastargs.dict_utils import recursive_get
-
 
 class JSONParser:
     def __init__(self, path):
@@ -16,9 +14,18 @@ class JSONParser:
 
     def __getitem__(self, path):
         try:
-            return recursive_get(self.data, path.split("."))
+            return self._recursive_get(self.data, path.split("."))
         except:
             raise ValueError(f"invalid path {path}")
+
+    def _recursive_get(self, data, keys):
+        cur = data
+        for key in keys:
+            if isinstance(cur, dict) and key in cur:
+                cur = cur[key]
+            else:
+                raise KeyError(key)
+        return cur
 
 
 def get_parser(*args, **kwargs):
