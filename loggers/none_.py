@@ -15,7 +15,7 @@ class NoneLogger(BaseLogger):
     def truncate(self, epoch: int) -> None:
         pass
 
-    def save_ckpt(self, name: str, data: dict) -> None:
+    def save_ckpt(self, name: str, data: dict, use_lora: bool = False) -> None:
         pass
 
     def load_ckpt(self, name: str) -> dict:

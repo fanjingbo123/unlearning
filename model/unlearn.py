@@ -437,7 +437,8 @@ class Unlearn:
 
     def save(self, logger):
         logger.save_ckpt("model", self.model, self.use_lora)
-        logger.save_ckpt("tokenizer", self.tokenizer, self.use_lora)
+        # tokenizer 不需要合并 LoRA，保持 use_lora=False 避免冗余逻辑
+        logger.save_ckpt("tokenizer", self.tokenizer, use_lora=False)
 
     def run(self, logger):
         if self.resume_path is None:
