@@ -102,8 +102,9 @@ def _projection_norm(sample_grad: Dict[str, torch.Tensor], epoch_grad: Dict[str,
         if epoch_norm_sq.item() == 0:
             return 0.0
 
+        # 返回带符号的投影，若样本梯度与整体梯度夹角>90°则为负值
         dot_product = sum(_flattened_dot(sample_grad[k], epoch_grad[k]) for k in shared_keys)
-        return float(torch.abs(dot_product) / torch.sqrt(epoch_norm_sq))
+        return float(dot_product / torch.sqrt(epoch_norm_sq))
 
 
 def compute_difficulty_scores(

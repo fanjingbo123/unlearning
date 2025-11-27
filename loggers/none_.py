@@ -8,6 +8,8 @@ class NoneLogger(BaseLogger):
         # 仍然预留根目录，确保下游需要写入 checkpoint/评测结果时有合法路径
         self.root = os.path.abspath(root)
         os.makedirs(self.root, exist_ok=True)
+        self.ckpt_root = os.path.join(self.root, "checkpoints")
+        os.makedirs(self.ckpt_root, exist_ok=True)
 
     def log(self, data: dict) -> None:
         print(data)
@@ -23,6 +25,9 @@ class NoneLogger(BaseLogger):
 
     def get_root(self):
         return self.root
+
+    def get_ckpt_root(self):
+        return os.path.abspath(self.ckpt_root)
 
     def save_img(self, name: str, data: dict) -> None:
         pass

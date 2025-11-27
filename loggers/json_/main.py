@@ -149,6 +149,9 @@ class JSONLogger(BaseLogger):
     def get_root(self):
         return os.path.abspath(self.root)
 
+    def get_ckpt_root(self):
+        return os.path.abspath(self.ckpt_root)
+
 
 def test():
     logger = JSONLogger("./", "test")

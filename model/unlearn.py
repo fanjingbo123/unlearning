@@ -24,6 +24,10 @@ from unlearn import GenerateMask, get_unlearn_method
 from unlearn.difficulty import collect_epoch_gradient, compute_difficulty_scores
 
 
+def _is_rank0():
+    return (not dist.is_available()) or (not dist.is_initialized()) or dist.get_rank() == 0
+
+
 class Unlearn:
     def __init__(self, model_name, cache_dir, **kwargs) -> None:
         self.model_name = model_name
@@ -391,13 +395,15 @@ class Unlearn:
             print(f"样本遗忘难度分数已保存至 {self.difficulty_score_path}")
 
     def eval(self, logger):
+        if not _is_rank0():
+            return
         self.model = None
         torch.cuda.empty_cache()
         root = logger.get_root()
         if self.resume_path is not None:
             model_name = self.resume_path
         else:
-            model_name = os.path.join(root, "checkpoints")
+            model_name = logger.get_ckpt_root() if hasattr(logger, "get_ckpt_root") else os.path.join(root, "checkpoints")
         if self.task_name != "tofu":
             eval_ppl(model_name=model_name, output_path=f"{root}/ppl.json")
             torch.cuda.empty_cache()
@@ -436,6 +442,8 @@ class Unlearn:
             eval_few_shots(model_name=model_name, task_list=["wmdp"],output_path=f"{root}/wmdp.json")
 
     def save(self, logger):
+        if not _is_rank0():
+            return
         logger.save_ckpt("model", self.model, self.use_lora)
         # tokenizer 不需要合并 LoRA，保持 use_lora=False 避免冗余逻辑
         logger.save_ckpt("tokenizer", self.tokenizer, use_lora=False)
@@ -463,3 +471,4 @@ class Unlearn:
 
 def get(**kwargs):
     return Unlearn(**kwargs)
+
