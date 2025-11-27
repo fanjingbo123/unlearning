@@ -461,6 +461,9 @@ class Unlearn:
             self.init_model()
             self.init_optimizer()
             self.init_dataset()
+            if self.compute_difficulty_only:
+                self.run_difficulty(logger)
+                return
             self.init_mask(logger)
             if self.compute_difficulty_only:
                 # 初始化 unlearner 以便使用对应算法的损失定义
