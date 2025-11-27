@@ -17,7 +17,7 @@ class BaseLogger(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def save_ckpt(self, name: str, data: dict) -> None:
+    def save_ckpt(self, name: str, data: dict, use_lora: bool = False) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -26,4 +26,12 @@ class BaseLogger(ABC):
 
     @abstractmethod
     def save_img(self, name: str, data: dict) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_root(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_ckpt_root(self):
         raise NotImplementedError

@@ -1,4 +1,5 @@
 import csv
+import os
 import random
 from collections import defaultdict
 
@@ -11,7 +12,7 @@ from .Base import BaseDataset, UnlearnDataset
 
 
 class ToFU(BaseDataset):
-    def __init__(self, dataset_name, subset="forget01", if_llama=False,spilt_data=None):
+    def __init__(self, dataset_name, subset="forget01", if_llama=False,spilt_data=None, max_length: int = 512):
         self.dataset_name = dataset_name
         self.dataset = defaultdict()
         self.if_llama = if_llama
@@ -19,13 +20,19 @@ class ToFU(BaseDataset):
         self.question_end_token = " [\INST]" if if_llama else "\n"
         self.answer_start_token = " " if if_llama else "### Answer: "
         self.subset = subset
+        # 统一控制最大长度，避免使用 tokenizer 默认的超长 model_max_length 触发巨型注意力掩码
+        #（例如 Qwen2.5 模型默认 32768，会在打分阶段直接 OOM）。
+        self.max_length = max_length
         self.dataset = self.get_dataset(spilt_data)
 
     def get_dataset(self,spilt_data):
         key = f"{self.subset}"
-        print(spilt_data)
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        train_file = os.path.join(local_root, "TOFU", f"{key}.json")
         if spilt_data is not None:
             train_dataset = load_from_disk(spilt_data)
+        elif os.path.exists(train_file):
+            train_dataset = load_dataset("json", data_files={"train": train_file})["train"]
         else:
             train_dataset = load_dataset(
                 "locuslab/TOFU", key, cache_dir="./.cache", split="train"
@@ -39,17 +46,13 @@ class ToFU(BaseDataset):
             test_key = f"world_facts_perturbed"
         elif "full" in self.subset:
             test_key = f"full"
-        test_dataset = load_dataset(
-            "locuslab/TOFU", test_key, cache_dir="./.cache", split="train"
-        )
-        # train_set = set(zip(train_dataset['question'], train_dataset['answer']))
-        
-        # # 定义一个过滤函数，移除在训练集中存在的条目
-        # def is_unique(example):
-        #     return (example['question'], example['answer']) not in train_set
-        
-        # # 应用过滤函数到测试集
-        # filtered_test_dataset = test_dataset.filter(is_unique)
+        test_file = os.path.join(local_root, "TOFU", f"{test_key}.json")
+        if os.path.exists(test_file):
+            test_dataset = load_dataset("json", data_files={"train": test_file})["train"]
+        else:
+            test_dataset = load_dataset(
+                "locuslab/TOFU", test_key, cache_dir="./.cache", split="train"
+            )
         dataset = defaultdict()
         dataset["train"] = train_dataset
         dataset["test"] = test_dataset
@@ -57,12 +60,33 @@ class ToFU(BaseDataset):
 
     def __preprocess__(self, tokenizer):
         refusal_answers = []
-        with open(
-            "files/data/polite_refusal_responses/polite_refusal_responses_tofu.csv", "r"
-        ) as f:
-            csv_reader = csv.reader(f)
-            for row in csv_reader:
-                refusal_answers.append(row[0])
+        # Prefer LOCAL_DATA_DIR 下的 polite_refusal_responses，缺失时回退到仓库默认
+        # 路径，再缺失则使用内置短语，避免因为找不到文件而报错。
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        candidate_paths = [
+            os.path.join(
+                local_root,
+                "polite_refusal_responses",
+                "polite_refusal_responses_tofu.csv",
+            ),
+            "files/data/polite_refusal_responses/polite_refusal_responses_tofu.csv",
+        ]
+
+        loaded = False
+        for path in candidate_paths:
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    csv_reader = csv.reader(f)
+                    for row in csv_reader:
+                        refusal_answers.append(row[0])
+                loaded = True
+                break
+
+        if not loaded:
+            refusal_answers = [
+                "抱歉，我无法满足这个请求。",
+                "我不能提供相关信息。",
+            ]
 
         def preprocess_train(examples):
             results = {
@@ -81,17 +105,24 @@ class ToFU(BaseDataset):
                     full_text,
                     truncation=True,
                     padding="max_length",
+                    max_length=self.max_length,
                     add_special_tokens=True,
                 )
                 num_question_token = len(
-                    tokenizer.tokenize(question, add_special_tokens=True)
+                    tokenizer(
+                        question,
+                        truncation=True,
+                        padding="max_length",
+                        max_length=self.max_length,
+                        add_special_tokens=True,
+                    )["input_ids"]
                 )
-                pad_length = 512 - len(tokenized.input_ids)
+                pad_length = self.max_length - len(tokenized.input_ids)
                 pad_input_ids = (
                     tokenized.input_ids + [tokenizer.pad_token_id] * pad_length
                 )
                 pad_attention_mask = tokenized.attention_mask + [0] * pad_length
-                if len(tokenized.input_ids) == 512:
+                if len(tokenized.input_ids) == self.max_length:
                     label = tokenized.input_ids
                 else:
                     label = (
@@ -118,8 +149,10 @@ class ToFU(BaseDataset):
                     tokenized.input_ids[: num_question_token + 1]
                     + refusal_tokenized.input_ids[1:]
                 )
-                if len(refusal_label) < 512:
-                    refusal_label = refusal_label + [-100] * (512 - len(refusal_label))
+                if len(refusal_label) < self.max_length:
+                    refusal_label = refusal_label + [-100] * (
+                        self.max_length - len(refusal_label)
+                    )
                 for i in range(num_question_token):
                     refusal_label[i] = -100
                 results["refused_label"].append(torch.tensor(refusal_label))
@@ -145,7 +178,7 @@ class ToFU(BaseDataset):
 
         return self.dataset
 
-    def build_pretrain_dataset(self, tokenizer, subset="full"):
+    def build_pretrain_dataset(self, tokenizer, subset="full", max_length=512):
         train_dataset = load_dataset(
             "locuslab/TOFU", subset, cache_dir="./.cache", split="train"
         )
@@ -165,18 +198,18 @@ class ToFU(BaseDataset):
                     full_text,
                     truncation=True,
                     padding="max_length",
-                    max_length=512,
+                    max_length=max_length,
                     add_special_tokens=True,
                 )
                 num_question_token = len(
-                    tokenizer.tokenize(question, add_special_tokens=True)
+                    tokenizer(question, add_special_tokens=True)["input_ids"]
                 )
-                pad_length = 512 - len(tokenized.input_ids)
+                pad_length = max_length - len(tokenized.input_ids)
                 pad_input_ids = (
                     tokenized.input_ids + [tokenizer.pad_token_id] * pad_length
                 )
                 pad_attention_mask = tokenized.attention_mask + [0] * pad_length
-                if len(tokenized.input_ids) == 512:
+                if len(tokenized.input_ids) == max_length:
                     label = tokenized.input_ids
                 else:
                     label = tokenized.input_ids + [-100] * pad_length

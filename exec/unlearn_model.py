@@ -1,4 +1,5 @@
 import argparse
+import argparse
 import os
 import random
 import sys
@@ -7,190 +8,143 @@ from importlib import import_module
 
 import numpy as np
 import torch
-from fastargs import Param, Section, get_current_config
-from fastargs.decorators import param
-from fastargs.validation import BoolAsInt, File, Folder, OneOf
 
 sys.path.append("src")
 
-Section("overall", "Overall configs").params(
-    model_name=Param(str, required=True, desc="Model name"),
-    logger=Param(OneOf(["json", "none"]), default="none", desc="Logger to use"),
-    cache_dir=Param(Folder(True), default=".cache", desc="Cache directory"),
-    seed=Param(int, default=0, desc="Random seed"),
-)
 
-Section("unlearn", "Unlearning configs").params(
-    unlearn_method=Param(
-        OneOf(
-            [
-                "FT",
-                "l1_sparse",
-                "GA",
-                "GA+FT",
-                "origin",
-                "CL",
-                "RL",
-                "KL",
-                "CL+FT",
-                "GA+KL",
-                "CL+KL",
-                "NPO+FT"
-            ]
-        ),
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="LLM unlearning")
+
+    # overall
+    parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--cache_dir", type=str, default=".cache")
+    parser.add_argument("--logger", type=str, choices=["json", "none"], default="json")
+    parser.add_argument("--log_root", type=str, default="files/logs")
+    parser.add_argument("--run_name", type=str, default=datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f"))
+    parser.add_argument("--seed", type=int, default=0)
+
+    # unlearn
+    parser.add_argument(
+        "--unlearn_method",
+        type=str,
         default="origin",
-        desc="Unlearning method",
-    ),
-    num_epochs=Param(int, default=1, desc="Number of epochs to train"),
-    lr=Param(float, default=1e-4, desc="Learning rate"),
-    weight_decay=Param(float, default=0.0, desc="Weight decay"),
-    gradient_accumulation_steps=Param(
-        int, default=1, desc="Gradient accumulation steps"
-    ),
-    mask_path=Param(str, default=None, desc="Path to mask file"),
-    task_name=Param(
-        OneOf(["toxic", "copyright", "tofu", "wmdp"]),
-        default="toxic",
-        desc="Task name",
-    ),
-    sophia=Param(BoolAsInt(), default=False, desc="Whether to use SOPHIA"),
-    p=Param(float, default=0.01, desc="p for snip_joint"),
-    q=Param(float, default=0.01, desc="q for snip_joint"),
-    resume_path=Param(
-        Folder(False), default=None, desc="Path to resume model for evaluation"
-    ),
-    max_steps=Param(int, default=-1, desc="Max steps for training"),
-    use_lora=Param(BoolAsInt(), default=False, desc="Whether to use LoRA"),
-    mu=Param(float, default=1e-3, desc="hessian approximantion parameter"),
-)
+        choices=[
+            "FT",
+            "l1_sparse",
+            "GA",
+            "GA+FT",
+            "origin",
+            "CL",
+            "RL",
+            "KL",
+            "CL+FT",
+            "GA+KL",
+            "CL+KL",
+            "NPO+FT",
+        ],
+    )
+    parser.add_argument("--num_epochs", type=int, default=1)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--mask_path", type=str, default=None)
+    parser.add_argument("--task_name", type=str, default="toxic", choices=["toxic", "copyright", "tofu", "wmdp"])
+    parser.add_argument("--sophia", action="store_true")
+    parser.add_argument("--p", type=float, default=0.01)
+    parser.add_argument("--q", type=float, default=0.01)
+    parser.add_argument("--resume_path", type=str, default=None)
+    parser.add_argument("--max_steps", type=int, default=-1)
+    parser.add_argument("--use_lora", action="store_true")
+    parser.add_argument("--mu", type=float, default=1e-3)
+    parser.add_argument("--alpha", type=float, default=None)
+    parser.add_argument("--gamma", type=float, default=None)
+    parser.add_argument("--betas_low", type=float, default=0.9)
+    parser.add_argument("--betas_high", type=float, default=0.95)
+    parser.add_argument("--rho", type=float, default=0.03)
 
-Section("unlearn.sophia_params", "SOPHIA configs").enable_if(
-    lambda cfg: cfg["unlearn.sophia"]
-).params(
-    betas_low=Param(float, default=0.9, desc="Betas lower for SOPHIA"),
-    betas_high=Param(float, default=0.95, desc="Betas higher for SOPHIA"),
-    rho=Param(float, default=0.03, desc="Rho for SOPHIA"),
-)
-Section("unlearn.NPO+FT", "NPO+FT unlearning configs").enable_if(
-    lambda cfg: cfg["unlearn.unlearn_method"] == "NPO+FT"
-).params(
-    gamma=Param(float, default=0.0, desc="hyperparameters before NPO loss"),
-)
+    # difficulty
+    parser.add_argument("--compute_difficulty_only", action="store_true")
+    parser.add_argument("--enable_difficulty_sampling", action="store_true")
+    parser.add_argument("--difficulty_score_path", type=str, default=None)
+    parser.add_argument("--difficulty_order", type=str, default="asc", choices=["asc", "desc"])
 
-Section("unlearn.l1_sparse", "L1 sparse unlearning configs").enable_if(
-    lambda cfg: cfg["unlearn.unlearn_method"] == "l1_sparse"
-).params(
-    alpha=Param(float, default=0.0, desc="L1 regularization parameter"),
-)
+    # dataset
+    parser.add_argument("--forget_dataset_name", type=str, default="SafePku")
+    parser.add_argument("--retain_dataset_name", type=str, default="TruthfulQA")
+    parser.add_argument("--dataset_seed", type=int, default=0)
+    parser.add_argument("--forget_ratio", type=float, default=200.0)
+    parser.add_argument("--self_retain", action="store_true")
+    parser.add_argument("--batch_size", type=int, default=16)
 
-Section("unlearn.CL+KL", "CL+KL unlearning configs").enable_if(
-    lambda cfg: cfg["unlearn.unlearn_method"] == "CL+KL"
-).params(
-    gamma=Param(float, default=0.0, desc="hyperparameters before CL loss"),
-)
-
-Section("unlearn.GA+KL", "GA+KL unlearning configs").enable_if(
-    lambda cfg: cfg["unlearn.unlearn_method"] == "GA+KL"
-).params(
-    gamma=Param(float, default=0.0, desc="hyperparameters before GA loss"),
-)
-
-Section("unlearn.CL+FT", "CL+FT unlearning configs").enable_if(
-    lambda cfg: cfg["unlearn.unlearn_method"] == "CL+FT"
-).params(
-    gamma=Param(float, default=1.0, desc="hyperparameters before CL loss"),
-)
-Section("unlearn.GA+FT", "GA+FT unlearning configs").enable_if(
-    lambda cfg: cfg["unlearn.unlearn_method"] == "GA+FT"
-).params(
-    gamma=Param(float, default=0.0, desc="hyperparameters before GA loss"),
-)
-
-Section("unlearn.KL", "KL unlearning configs").enable_if(
-    lambda cfg: cfg["unlearn.unlearn_method"] == "KL"
-).params(
-    gamma=Param(
-        float, default=0.0, desc="hyperparameters before KL loss on forget dataset"
-    ),
-)
-
-Section("dataset", "Dataset configs").params(
-    forget_dataset_name=Param(str, default="SafePku", desc="forget dataset name"),
-    retain_dataset_name=Param(str, default="TruthfulQA", desc="retain dataset name"),
-    dataset_seed=Param(int, default=0, desc="Dataset seed"),
-    forget_ratio=Param(float, default=200, desc="Forget ratio"),
-    self_retain=Param(BoolAsInt(), default=False, desc="Whether to retain self"),
-    batch_size=Param(int, default=16, desc="Batch size"),
-)
-
-Section("logger", "General logger configs").params(
-    name=Param(
-        str,
-        default=datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f"),
-        desc="Name of this run",
-    ),
-)
-
-Section("logger.json", "JSON logger").enable_if(
-    lambda cfg: cfg["overall.logger"] == "json"
-).params(
-    root=Param(Folder(True), default="files/logs", desc="Path to log folder"),
-)
+    return parser
 
 
-class Main:
-    def __init__(self) -> None:
-        self.make_config()
-        self.setup_seed()
-        self.init_model()
-        self.init_logger()
-        self.run()
+def setup_seed(seed: int):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.enabled = False
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
-    def make_config(self, quiet=False):
-        self.config = get_current_config()
-        parser = argparse.ArgumentParser("LLM unlearning")
-        self.config.augment_argparse(parser)
-        self.config.collect_argparse_args(parser)
 
-        self.config.validate()
-        if not quiet:
-            self.config.summary()
+def build_model(args):
+    kwargs = {
+        "model_name": args.model_name,
+        "cache_dir": args.cache_dir,
+        "unlearn_method": args.unlearn_method,
+        "batch_size": args.batch_size,
+        "dataset_names": {"forget": args.forget_dataset_name, "retain": args.retain_dataset_name},
+        "dataset_seed": args.dataset_seed,
+        "forget_ratio": args.forget_ratio,
+        "self_retain": args.self_retain,
+        "num_epochs": args.num_epochs,
+        "lr": args.lr,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "weight_decay": args.weight_decay,
+        "mask_path": args.mask_path,
+        "task_name": args.task_name,
+        "sophia": args.sophia,
+        "p": args.p,
+        "q": args.q,
+        "resume_path": args.resume_path,
+        "max_steps": args.max_steps,
+        "use_lora": args.use_lora,
+        "mu": args.mu,
+        "compute_difficulty_only": args.compute_difficulty_only,
+        "enable_difficulty_sampling": args.enable_difficulty_sampling,
+        "difficulty_score_path": args.difficulty_score_path,
+        "difficulty_order": args.difficulty_order,
+    }
 
-    @param("overall.seed")
-    def setup_seed(self, seed: int):
-        random.seed(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        np.random.seed(seed)
-        torch.backends.cudnn.enabled = False
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
+    if args.alpha is not None:
+        kwargs["alpha"] = args.alpha
+    if args.gamma is not None:
+        kwargs["gamma"] = args.gamma
+    if args.sophia:
+        kwargs.update({"betas_low": args.betas_low, "betas_high": args.betas_high, "rho": args.rho})
 
-    @param("overall.model_name")
-    def init_model(self, model_name):
-        kwargs = self.config.get_section(f"overall")
-        kwargs.update(self.config.get_section(f"unlearn"))
-        kwargs.update(self.config.get_section(f"dataset"))
-        kwargs.update(self.config.get_section(f"unlearn.{kwargs['unlearn_method']}"))
-        if kwargs["sophia"]:
-            kwargs.update(self.config.get_section(f"unlearn.sophia_params"))
-        kwargs["dataset_names"] = {
-            "forget": kwargs["forget_dataset_name"],
-            "retain": kwargs["retain_dataset_name"],
-        }
-        self.model = import_module(f"model.unlearn").get(**kwargs)
+    return import_module("model.unlearn").get(**kwargs)
 
-    @param("overall.logger")
-    def init_logger(self, logger):
-        kwargs = self.config.get_section(f"logger")
-        kwargs.update(self.config.get_section(f"logger.{logger}"))
-        kwargs["config"] = self.config.get_all_config()
-        self.logger = import_module(f"loggers.{logger}_").get(**kwargs)
 
-    def run(self):
-        self.model.run(self.logger)
+def build_logger(args):
+    if args.logger == "json":
+        config = vars(args).copy()
+        return import_module("loggers.json_").get(root=args.log_root, name=args.run_name, config=config)
+    return import_module("loggers.none_").get(root=args.log_root)
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    setup_seed(args.seed)
+    model = build_model(args)
+    logger = build_logger(args)
+    model.run(logger)
 
 
 if __name__ == "__main__":
-    Main()
+    main()

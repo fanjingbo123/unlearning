@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 
 
@@ -26,7 +27,18 @@ def eval_ppl(
     full_command = [command] + args
 
     # Execute the command
-    try:
-        subprocess.run(full_command, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"An error occurred: {e}")
+    if shutil.which(command) is None:
+        print(f"Skip ppl eval because '{command}' is not installed or not in PATH.")
+        return
+
+    # lm_eval 可能因本地 transformers 版本缺少可选模型（如 Qwen2Audio）而报错。
+    # 使用 check=False 并捕获输出，避免异常向上抛出中断遗忘流程。
+    proc = subprocess.run(full_command, check=False, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(
+            "Skip ppl eval because lm_eval failed. \n"
+            f"cmd: {' '.join(full_command)}\n"
+            f"returncode: {proc.returncode}\n"
+            f"stdout: {proc.stdout}\n"
+            f"stderr: {proc.stderr}"
+        )
