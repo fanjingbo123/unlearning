@@ -12,7 +12,7 @@ from .Base import BaseDataset, UnlearnDataset
 
 
 class ToFU(BaseDataset):
-    def __init__(self, dataset_name, subset="forget01", if_llama=False,spilt_data=None):
+    def __init__(self, dataset_name, subset="forget01", if_llama=False,spilt_data=None, max_length: int = 512):
         self.dataset_name = dataset_name
         self.dataset = defaultdict()
         self.if_llama = if_llama
@@ -20,6 +20,9 @@ class ToFU(BaseDataset):
         self.question_end_token = " [\INST]" if if_llama else "\n"
         self.answer_start_token = " " if if_llama else "### Answer: "
         self.subset = subset
+        # 统一控制最大长度，避免使用 tokenizer 默认的超长 model_max_length 触发巨型注意力掩码
+        #（例如 Qwen2.5 模型默认 32768，会在打分阶段直接 OOM）。
+        self.max_length = max_length
         self.dataset = self.get_dataset(spilt_data)
 
     def get_dataset(self,spilt_data):
@@ -57,12 +60,33 @@ class ToFU(BaseDataset):
 
     def __preprocess__(self, tokenizer):
         refusal_answers = []
-        with open(
-            "files/data/polite_refusal_responses/polite_refusal_responses_tofu.csv", "r"
-        ) as f:
-            csv_reader = csv.reader(f)
-            for row in csv_reader:
-                refusal_answers.append(row[0])
+        # Prefer LOCAL_DATA_DIR 下的 polite_refusal_responses，缺失时回退到仓库默认
+        # 路径，再缺失则使用内置短语，避免因为找不到文件而报错。
+        local_root = os.environ.get("LOCAL_DATA_DIR", "data")
+        candidate_paths = [
+            os.path.join(
+                local_root,
+                "polite_refusal_responses",
+                "polite_refusal_responses_tofu.csv",
+            ),
+            "files/data/polite_refusal_responses/polite_refusal_responses_tofu.csv",
+        ]
+
+        loaded = False
+        for path in candidate_paths:
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    csv_reader = csv.reader(f)
+                    for row in csv_reader:
+                        refusal_answers.append(row[0])
+                loaded = True
+                break
+
+        if not loaded:
+            refusal_answers = [
+                "抱歉，我无法满足这个请求。",
+                "我不能提供相关信息。",
+            ]
 
         def preprocess_train(examples):
             results = {
@@ -81,17 +105,24 @@ class ToFU(BaseDataset):
                     full_text,
                     truncation=True,
                     padding="max_length",
+                    max_length=self.max_length,
                     add_special_tokens=True,
                 )
                 num_question_token = len(
-                    tokenizer.tokenize(question, add_special_tokens=True)
+                    tokenizer(
+                        question,
+                        truncation=True,
+                        padding="max_length",
+                        max_length=self.max_length,
+                        add_special_tokens=True,
+                    )["input_ids"]
                 )
-                pad_length = 512 - len(tokenized.input_ids)
+                pad_length = self.max_length - len(tokenized.input_ids)
                 pad_input_ids = (
                     tokenized.input_ids + [tokenizer.pad_token_id] * pad_length
                 )
                 pad_attention_mask = tokenized.attention_mask + [0] * pad_length
-                if len(tokenized.input_ids) == 512:
+                if len(tokenized.input_ids) == self.max_length:
                     label = tokenized.input_ids
                 else:
                     label = (
@@ -118,8 +149,10 @@ class ToFU(BaseDataset):
                     tokenized.input_ids[: num_question_token + 1]
                     + refusal_tokenized.input_ids[1:]
                 )
-                if len(refusal_label) < 512:
-                    refusal_label = refusal_label + [-100] * (512 - len(refusal_label))
+                if len(refusal_label) < self.max_length:
+                    refusal_label = refusal_label + [-100] * (
+                        self.max_length - len(refusal_label)
+                    )
                 for i in range(num_question_token):
                     refusal_label[i] = -100
                 results["refused_label"].append(torch.tensor(refusal_label))
@@ -169,7 +202,7 @@ class ToFU(BaseDataset):
                     add_special_tokens=True,
                 )
                 num_question_token = len(
-                    tokenizer.tokenize(question, add_special_tokens=True)
+                    tokenizer(question, add_special_tokens=True)["input_ids"]
                 )
                 pad_length = max_length - len(tokenized.input_ids)
                 pad_input_ids = (

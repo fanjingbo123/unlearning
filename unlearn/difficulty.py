@@ -43,6 +43,7 @@ def collect_epoch_gradient(
     model: torch.nn.Module,
     dataloader: DataLoader,
     gradient_accumulation_steps: int,
+    loss_fn=None,
 ) -> Dict[str, torch.Tensor]:
     """Run one epoch over the forget dataloader and accumulate gradients."""
     model.train()
@@ -53,18 +54,46 @@ def collect_epoch_gradient(
 
     autocast_ctx = _autocast_context(model)
 
+    def _prepare_inputs(batch):
+        inputs = {}
+        if batch.get("forget") is not None:
+            fi = batch["forget"]
+            inputs["forget"] = (
+                fi[0].to(device),
+                fi[1].to(device),
+                fi[2].to(device),
+                *fi[3:],
+            )
+        if batch.get("retain") is not None:
+            ri = batch["retain"]
+            inputs["retain"] = (
+                ri[0].to(device),
+                ri[1].to(device),
+                ri[2].to(device),
+            )
+        return inputs
+
     for batch in dataloader:
-        forget_inputs = batch["forget"]
+        inputs = _prepare_inputs(batch)
+        forget_inputs = inputs.get("forget")
         input_ids, attention_mask, labels = (
-            forget_inputs[0].to(device),
-            forget_inputs[1].to(device),
-            forget_inputs[2].to(device),
+            forget_inputs[0],
+            forget_inputs[1],
+            forget_inputs[2],
         )
         with autocast_ctx:
-            outputs = model(
-                input_ids=input_ids, attention_mask=attention_mask, labels=labels
-            )
-            loss = outputs.loss / gradient_accumulation_steps
+            if loss_fn is None:
+                outputs = model(
+                    input_ids=input_ids, attention_mask=attention_mask, labels=labels
+                )
+                loss = outputs.loss / gradient_accumulation_steps
+            else:
+                loss = loss_fn(
+                    model,
+                    inputs,
+                    return_outputs=False,
+                )
+                loss = loss / gradient_accumulation_steps
         loss.backward()
         step += 1
 
@@ -112,6 +141,7 @@ def compute_difficulty_scores(
     dataloader: DataLoader,
     epoch_grad: Dict[str, torch.Tensor],
     save_path: str,
+    loss_fn=None,
 ) -> List[Dict[str, float]]:
     """Compute per-sample projection norms onto the epoch gradient and save as JSON."""
     device = next(model.parameters()).device
@@ -127,17 +157,37 @@ def compute_difficulty_scores(
 
     for idx, batch in enumerate(dataloader):
         _zero_grad(model)
-        forget_inputs = batch["forget"]
+        inputs = {}
+        if batch.get("forget") is not None:
+            fi = batch["forget"]
+            inputs["forget"] = (
+                fi[0].to(device),
+                fi[1].to(device),
+                fi[2].to(device),
+                *fi[3:],
+            )
+        if batch.get("retain") is not None:
+            ri = batch["retain"]
+            inputs["retain"] = (
+                ri[0].to(device),
+                ri[1].to(device),
+                ri[2].to(device),
+            )
+        forget_inputs = inputs.get("forget")
         input_ids, attention_mask, labels = (
-            forget_inputs[0].to(device),
-            forget_inputs[1].to(device),
-            forget_inputs[2].to(device),
+            forget_inputs[0],
+            forget_inputs[1],
+            forget_inputs[2],
         )
         with autocast_ctx:
-            outputs = model(
-                input_ids=input_ids, attention_mask=attention_mask, labels=labels
-            )
-        outputs.loss.backward()
+            if loss_fn is None:
+                outputs = model(
+                    input_ids=input_ids, attention_mask=attention_mask, labels=labels
+                )
+                loss = outputs.loss
+            else:
+                loss = loss_fn(model, inputs, return_outputs=False)
+        loss.backward()
         sample_grad: Dict[str, torch.Tensor] = {}
         _accumulate_gradients(model, sample_grad)
         sample_index = idx if sampler_indices is None else next(sampler_iter)

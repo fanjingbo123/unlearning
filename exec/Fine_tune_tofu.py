@@ -92,6 +92,12 @@ def build_model_and_tokenizer(args):
         attn_implementation=args.attn_implementation,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
+    # 使用梯度检查点时需要禁用缓存，并让输入参与反向传播，避免梯度为 None
+    if args.gradient_checkpointing:
+        model.config.use_cache = False
+        # 先显式开启 checkpoint，再强制让输入开启 requires_grad，避免 torch.utils.checkpoint 提示无梯度
+        model.gradient_checkpointing_enable(use_reentrant=False)
+        model.enable_input_require_grads()
 
     target_modules = detect_lora_target_modules(model)
     lora_cfg = LoraConfig(

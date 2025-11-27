@@ -21,29 +21,34 @@ class KL(BaseTrainer):
             "labels": forget_data[2],
         }
 
-        retain_data = inputs["retain"]
+        retain_data = inputs.get("retain")
 
-        retain_inputs = {
-            "input_ids": retain_data[0],
-            "attention_mask": retain_data[1],
-            "labels": retain_data[2],
-        }
-
+        retain_loss = None
         forget_outputs = model(**forget_inputs)
-        retain_outputs = model(**retain_inputs)
+
+        if retain_data is not None:
+            retain_inputs = {
+                "input_ids": retain_data[0],
+                "attention_mask": retain_data[1],
+                "labels": retain_data[2],
+            }
+
+            retain_outputs = model(**retain_inputs)
+
+            with torch.no_grad():
+                infer_retain_outputs = self.infer_model(**retain_inputs)
+            prob_retain_p = torch.softmax(retain_outputs.logits, dim=-1)
+            prob_retain_q = torch.softmax(infer_retain_outputs.logits, dim=-1)
+            retain_loss = kl_loss(prob_retain_p, prob_retain_q)
 
         with torch.no_grad():
             infer_forget_outputs = self.infer_model(**forget_inputs)
-            infer_retain_outputs = self.infer_model(**retain_inputs)
 
         prob_forget_p = torch.softmax(forget_outputs.logits, dim=-1)
         prob_forget_q = torch.softmax(infer_forget_outputs.logits, dim=-1)
 
-        prob_retain_p = torch.softmax(retain_outputs.logits, dim=-1)
-        prob_retain_q = torch.softmax(infer_retain_outputs.logits, dim=-1)
-
         forget_loss = kl_loss(prob_forget_p, prob_forget_q)
-        retain_loss = kl_loss(prob_retain_p, prob_retain_q)
+        retain_loss = torch.tensor(0.0, device=forget_loss.device) if retain_loss is None else retain_loss
 
         loss = -self.gamma * forget_loss + retain_loss
 
@@ -63,26 +68,30 @@ class KL_GA(KL):
             "labels": forget_data[2],
         }
 
-        retain_data = inputs["retain"]
+        retain_data = inputs.get("retain")
 
-        retain_inputs = {
-            "input_ids": retain_data[0],
-            "attention_mask": retain_data[1],
-            "labels": retain_data[2],
-        }
-
+        retain_loss = None
         forget_outputs = model(**forget_inputs)
-        retain_outputs = model(**retain_inputs)
 
-        with torch.no_grad():
-            infer_retain_outputs = self.infer_model(**retain_inputs)
+        if retain_data is not None:
+            retain_inputs = {
+                "input_ids": retain_data[0],
+                "attention_mask": retain_data[1],
+                "labels": retain_data[2],
+            }
+
+            retain_outputs = model(**retain_inputs)
+
+            with torch.no_grad():
+                infer_retain_outputs = self.infer_model(**retain_inputs)
+
+            prob_retain_p = torch.softmax(retain_outputs.logits, dim=-1)
+            prob_retain_q = torch.softmax(infer_retain_outputs.logits, dim=-1)
+
+            retain_loss = kl_loss(prob_retain_p, prob_retain_q)
 
         forget_loss = -forget_outputs.loss
-
-        prob_retain_p = torch.softmax(retain_outputs.logits, dim=-1)
-        prob_retain_q = torch.softmax(infer_retain_outputs.logits, dim=-1)
-
-        retain_loss = kl_loss(prob_retain_p, prob_retain_q)
+        retain_loss = torch.tensor(0.0, device=forget_loss.device) if retain_loss is None else retain_loss
 
         loss = self.gamma * forget_loss + retain_loss
 
@@ -102,24 +111,29 @@ class KL_CL(KL):
             "labels": forget_data[3],
         }
 
-        retain_data = inputs["retain"]
+        retain_data = inputs.get("retain")
 
-        retain_inputs = {
-            "input_ids": retain_data[0],
-            "attention_mask": retain_data[1],
-            "labels": retain_data[2],
-        }
-
+        retain_loss = None
         forget_outputs = model(**forget_inputs)
-        retain_outputs = model(**retain_inputs)
 
-        with torch.no_grad():
-            infer_retain_outputs = self.infer_model(**retain_inputs)
+        if retain_data is not None:
+            retain_inputs = {
+                "input_ids": retain_data[0],
+                "attention_mask": retain_data[1],
+                "labels": retain_data[2],
+            }
 
-        prob_retain_p = torch.softmax(retain_outputs.logits, dim=-1)
-        prob_retain_q = torch.softmax(infer_retain_outputs.logits, dim=-1)
+            retain_outputs = model(**retain_inputs)
 
-        retain_loss = kl_loss(prob_retain_p, prob_retain_q)
+            with torch.no_grad():
+                infer_retain_outputs = self.infer_model(**retain_inputs)
+
+            prob_retain_p = torch.softmax(retain_outputs.logits, dim=-1)
+            prob_retain_q = torch.softmax(infer_retain_outputs.logits, dim=-1)
+
+            retain_loss = kl_loss(prob_retain_p, prob_retain_q)
+
+        retain_loss = torch.tensor(0.0, device=forget_outputs.loss.device) if retain_loss is None else retain_loss
         forget_loss = forget_outputs.loss
 
         loss = self.gamma * forget_loss + retain_loss

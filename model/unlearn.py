@@ -46,6 +46,7 @@ class Unlearn:
         self.alpha = kwargs.get("alpha", None)
         self.gamma = kwargs.get("gamma", None)
         self.mask_path = kwargs.get("mask_path", None)
+        self.mask = None
         self.task_name = kwargs.get("task_name", None)
         self.k = kwargs.get("k", 100)
         self.sophia = kwargs.get("sophia", False)
@@ -364,6 +365,11 @@ class Unlearn:
             root = logger.get_root() if hasattr(logger, "get_root") else "files/logs"
             self.difficulty_score_path = os.path.join(root, "difficulty_scores.json")
 
+        # 使用当前遗忘方法的损失定义（若有），确保难度分数随 unlearn_method 变化
+        loss_fn = None
+        if self.unlearner is not None and hasattr(self.unlearner, "compute_loss"):
+            loss_fn = self.unlearner.compute_loss
+
         # 显存友好：关闭缓存、开启梯度检查点（若可用）
         if hasattr(self.model, "config"):
             try:
@@ -381,6 +387,7 @@ class Unlearn:
             self.model,
             forget_loader,
             gradient_accumulation_steps=self.gradient_accumulation_steps,
+            loss_fn=loss_fn,
         )
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -390,6 +397,7 @@ class Unlearn:
             sample_loader,
             epoch_grad,
             save_path=self.difficulty_score_path,
+            loss_fn=loss_fn,
         )
         if (not dist.is_available()) or (not dist.is_initialized()) or dist.get_rank() == 0:
             print(f"样本遗忘难度分数已保存至 {self.difficulty_score_path}")
@@ -457,6 +465,11 @@ class Unlearn:
                 self.run_difficulty(logger)
                 return
             self.init_mask(logger)
+            if self.compute_difficulty_only:
+                # 初始化 unlearner 以便使用对应算法的损失定义
+                self.init_unlearner(logger)
+                self.run_difficulty(logger)
+                return
             self.init_unlearner(logger)
             if self.unlearner:
                 self.unlearner.train()
